@@ -1,28 +1,24 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/IceRhymers/databricks-claude/pkg/filelock"
 	"github.com/IceRhymers/databricks-claude/pkg/registry"
-	"github.com/tidwall/jsonc"
+	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
 // ConfigManager coordinates config.json patching, file locking, and
 // multi-session registration for OpenCode.
 type ConfigManager struct {
-	configPath string
-	backupPath string
-	original   []byte
-	lock       *filelock.FileLock
-	registry   *registry.SessionRegistry
+	config   *jsonconfig.Config
+	lock     *filelock.FileLock
+	registry *registry.SessionRegistry
 }
 
-// NewConfigManager creates a ConfigManager that manages ~/.config/opencode/config.json.
+// NewConfigManager creates a ConfigManager that manages ~/.config/opencode/opencode.json.
 func NewConfigManager() *ConfigManager {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -30,31 +26,55 @@ func NewConfigManager() *ConfigManager {
 		home = "."
 	}
 	opencodeDir := filepath.Join(home, ".config", "opencode")
-	configPath := filepath.Join(opencodeDir, "config.json")
 	return &ConfigManager{
-		configPath: configPath,
-		backupPath: configPath + ".databricks-opencode-backup",
-		lock:       filelock.New(filepath.Join(opencodeDir, ".config.lock")),
-		registry:   registry.New(filepath.Join(opencodeDir, ".sessions.json")),
+		config:   jsonconfig.New(),
+		lock:     filelock.New(filepath.Join(opencodeDir, ".config.lock")),
+		registry: registry.New(filepath.Join(opencodeDir, ".sessions.json")),
+	}
+}
+
+// newConfigManagerWithPaths creates a ConfigManager with explicit paths (for testing).
+func newConfigManagerWithPaths(configPath, backupPath, lockPath, registryPath string) *ConfigManager {
+	return &ConfigManager{
+		config:   jsonconfig.NewWithPath(configPath, backupPath),
+		lock:     filelock.New(lockPath),
+		registry: registry.New(registryPath),
 	}
 }
 
 // Setup backs up config.json, patches it with the proxy config, and
 // registers the current session. The caller must call Restore on exit.
-func (cm *ConfigManager) Setup(proxyURL, model, otelEndpoint string) error {
+func (cm *ConfigManager) Setup(proxyURL, modelName, apiKey string) error {
 	if err := cm.lock.Lock(); err != nil {
 		log.Printf("databricks-opencode: config lock warning: %v", err)
 	}
 	defer cm.lock.Unlock()
 
-	// Recover from a previous crash if needed.
-	cm.restoreFromBackup()
+	// Crash recovery: if a backup exists from a previous crashed session,
+	// decide whether to restore or hand off.
+	if cm.config.HasBackup() {
+		survivor, err := cm.registry.MostRecentLive()
+		if err == nil && survivor != nil {
+			// Another session is alive — hand off to its proxy.
+			log.Printf("databricks-opencode: crash recovery: handing off to session %d (proxy: %s)",
+				survivor.PID, survivor.ProxyURL)
+			if err := cm.config.UpdateProxyURL(survivor.ProxyURL); err != nil {
+				log.Printf("databricks-opencode: crash recovery handoff failed: %v", err)
+			}
+		} else {
+			// No live sessions — restore original config first.
+			log.Printf("databricks-opencode: restoring config.json from crash backup")
+			if err := cm.config.Restore(); err != nil {
+				log.Printf("databricks-opencode: crash restore failed: %v", err)
+			}
+		}
+	}
 
-	if err := cm.backup(); err != nil {
+	if err := cm.config.Backup(); err != nil {
 		return err
 	}
 
-	if err := cm.patch(proxyURL, model); err != nil {
+	if err := cm.config.Patch(proxyURL, modelName, apiKey); err != nil {
 		return err
 	}
 
@@ -62,7 +82,7 @@ func (cm *ConfigManager) Setup(proxyURL, model, otelEndpoint string) error {
 		log.Printf("databricks-opencode: session register warning: %v", err)
 	}
 
-	log.Printf("databricks-opencode: patched %s (proxy: %s)", cm.configPath, proxyURL)
+	log.Printf("databricks-opencode: patched %s (proxy: %s)", cm.config.Path(), proxyURL)
 	return nil
 }
 
@@ -82,133 +102,17 @@ func (cm *ConfigManager) Restore() {
 	if err == nil && survivor != nil {
 		log.Printf("databricks-opencode: handing off config.json to session %d (proxy: %s)",
 			survivor.PID, survivor.ProxyURL)
-		if err := cm.updateProxyURL(survivor.ProxyURL); err != nil {
+		if err := cm.config.UpdateProxyURL(survivor.ProxyURL); err != nil {
 			log.Printf("databricks-opencode: handoff failed, restoring original: %v", err)
-			cm.restoreConfig()
+			cm.config.Restore()
 		}
 		return
 	}
 
 	// Last session — restore original config.
-	if err := cm.restoreConfig(); err != nil {
+	if err := cm.config.Restore(); err != nil {
 		log.Printf("databricks-opencode: config restore failed: %v", err)
 	} else {
 		log.Printf("databricks-opencode: config.json restored")
 	}
-}
-
-// backup reads the current config.json and saves the original content.
-func (cm *ConfigManager) backup() error {
-	data, err := os.ReadFile(cm.configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			cm.original = nil
-			return nil
-		}
-		return fmt.Errorf("read config.json: %w", err)
-	}
-	cm.original = data
-	if err := atomicWrite(cm.backupPath, data); err != nil {
-		return fmt.Errorf("write backup: %w", err)
-	}
-	return nil
-}
-
-// patch writes a new config.json that points OpenCode at the local proxy.
-// OpenCode config.json uses JSONC format with provider configuration.
-func (cm *ConfigManager) patch(proxyURL, model string) error {
-	// Read existing config, strip JSONC comments for merging.
-	var existing []byte
-	if cm.original != nil {
-		existing = jsonc.ToJSON(cm.original)
-	}
-	_ = existing // We rebuild the proxy-relevant parts but could merge user settings.
-
-	config := fmt.Sprintf(`{
-  "provider": {
-    "databricks-proxy": {
-      "apiKey": "databricks-proxy",
-      "model": %q,
-      "baseURL": %q
-    }
-  }
-}
-`, model, proxyURL)
-
-	if err := atomicWrite(cm.configPath, []byte(config)); err != nil {
-		return fmt.Errorf("write patched config.json: %w", err)
-	}
-	return nil
-}
-
-// restoreConfig writes the original config.json content back.
-func (cm *ConfigManager) restoreConfig() error {
-	if cm.original == nil {
-		os.Remove(cm.configPath)
-	} else {
-		if err := atomicWrite(cm.configPath, cm.original); err != nil {
-			return fmt.Errorf("restore config.json: %w", err)
-		}
-	}
-	os.Remove(cm.backupPath)
-	return nil
-}
-
-// restoreFromBackup recovers from a crash by restoring from the backup file.
-func (cm *ConfigManager) restoreFromBackup() {
-	data, err := os.ReadFile(cm.backupPath)
-	if err != nil {
-		return
-	}
-	log.Printf("databricks-opencode: restoring config.json from crash backup")
-	cm.original = data
-	_ = cm.restoreConfig()
-}
-
-// updateProxyURL updates only the baseURL in the managed config.json.
-func (cm *ConfigManager) updateProxyURL(newURL string) error {
-	data, err := os.ReadFile(cm.configPath)
-	if err != nil {
-		return fmt.Errorf("read config for proxy URL update: %w", err)
-	}
-
-	content := string(data)
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "\"baseURL\"") && strings.Contains(trimmed, ":") {
-			lines[i] = fmt.Sprintf("      \"baseURL\": %q", newURL)
-			break
-		}
-	}
-
-	return atomicWrite(cm.configPath, []byte(strings.Join(lines, "\n")))
-}
-
-// atomicWrite writes data to a temp file and renames it into place.
-func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return os.Rename(tmpPath, path)
 }
