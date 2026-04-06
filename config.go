@@ -42,17 +42,21 @@ func newConfigManagerWithPaths(configPath, backupPath, lockPath, registryPath st
 	}
 }
 
-// Setup backs up config.json, patches it with the proxy config, and
-// registers the current session. The caller must call Restore on exit.
-func (cm *ConfigManager) Setup(proxyURL, modelName, apiKey string) error {
+// Setup snapshots managed keys, patches config.json with the proxy config,
+// and registers the current session. The caller must call Restore on exit.
+// forceModel indicates whether --model was explicitly passed (overrides user config).
+func (cm *ConfigManager) Setup(proxyURL, modelName, apiKey string, forceModel bool) error {
 	if err := cm.lock.Lock(); err != nil {
 		log.Printf("databricks-opencode: config lock warning: %v", err)
 	}
 	defer cm.lock.Unlock()
 
-	// Crash recovery: if a backup exists from a previous crashed session,
-	// decide whether to restore or hand off.
-	if cm.config.HasBackup() {
+	// Crash recovery: if a sidecar or backup sentinel exists from a previous
+	// crashed session, decide whether to restore or hand off.
+	// First, unregister our own PID — if we crashed before, our stale entry
+	// should not count as a "survivor".
+	if cm.config.HasSidecar() || cm.config.HasBackup() {
+		cm.registry.Unregister(os.Getpid())
 		survivor, err := cm.registry.MostRecentLive()
 		if err == nil && survivor != nil {
 			// Another session is alive — hand off to its proxy.
@@ -62,19 +66,25 @@ func (cm *ConfigManager) Setup(proxyURL, modelName, apiKey string) error {
 				log.Printf("databricks-opencode: crash recovery handoff failed: %v", err)
 			}
 		} else {
-			// No live sessions — restore original config first.
-			log.Printf("databricks-opencode: restoring config.json from crash backup")
+			// No live sessions — restore original keys surgically.
+			log.Printf("databricks-opencode: restoring config.json from crash (surgical)")
 			if err := cm.config.Restore(); err != nil {
 				log.Printf("databricks-opencode: crash restore failed: %v", err)
 			}
 		}
 	}
 
-	if err := cm.config.Backup(); err != nil {
+	// Snapshot managed keys before patching.
+	if err := cm.config.SaveOriginals(); err != nil {
 		return err
 	}
 
-	if err := cm.config.Patch(proxyURL, modelName, apiKey); err != nil {
+	// Write backup sentinel for crash detection.
+	if err := cm.config.WriteSentinel(); err != nil {
+		return err
+	}
+
+	if err := cm.config.Patch(proxyURL, modelName, apiKey, forceModel); err != nil {
 		return err
 	}
 
@@ -109,10 +119,10 @@ func (cm *ConfigManager) Restore() {
 		return
 	}
 
-	// Last session — restore original config.
+	// Last session — surgically restore only managed keys.
 	if err := cm.config.Restore(); err != nil {
 		log.Printf("databricks-opencode: config restore failed: %v", err)
 	} else {
-		log.Printf("databricks-opencode: config.json restored")
+		log.Printf("databricks-opencode: config.json restored (surgical)")
 	}
 }

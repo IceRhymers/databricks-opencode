@@ -32,13 +32,13 @@ func readJSON(t *testing.T, path string) map[string]interface{} {
 func TestPatchEmptyFile(t *testing.T) {
 	c := setupTestConfig(t)
 
-	if err := c.Patch("http://127.0.0.1:9000", "gpt-5-4", "databricks-proxy"); err != nil {
+	if err := c.Patch("http://127.0.0.1:9000", "gpt-5-4", "databricks-proxy", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
 	m := readJSON(t, c.Path())
 
-	// Check model field.
+	// Check model field — should be set when absent.
 	model, ok := m["model"].(string)
 	if !ok || model != "databricks-proxy/gpt-5-4" {
 		t.Errorf("model = %q, want %q", model, "databricks-proxy/gpt-5-4")
@@ -80,7 +80,7 @@ func TestPatchPreservesUserConfig(t *testing.T) {
 		t.Fatalf("write existing config: %v", err)
 	}
 
-	if err := c.Patch("http://127.0.0.1:8080", "claude-4", "db-key"); err != nil {
+	if err := c.Patch("http://127.0.0.1:8080", "claude-4", "db-key", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
@@ -108,7 +108,66 @@ func TestPatchPreservesUserConfig(t *testing.T) {
 	}
 }
 
-func TestBackupRestore(t *testing.T) {
+func TestPatchPreservesExistingModel(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Write config with user-configured model.
+	existing := `{"model": "openai/gpt-4o", "theme": "dark"}`
+	if err := os.WriteFile(c.Path(), []byte(existing), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Patch without forceModel — should preserve existing model.
+	if err := c.Patch("http://127.0.0.1:9000", "gpt-5-4", "key", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	if m["model"] != "openai/gpt-4o" {
+		t.Errorf("model = %v, want %q (should preserve existing)", m["model"], "openai/gpt-4o")
+	}
+}
+
+func TestPatchForceModelOverridesExisting(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Write config with user-configured model.
+	existing := `{"model": "openai/gpt-4o"}`
+	if err := os.WriteFile(c.Path(), []byte(existing), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Patch with forceModel — should override.
+	if err := c.Patch("http://127.0.0.1:9000", "gpt-5-4", "key", true); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	if m["model"] != "databricks-proxy/gpt-5-4" {
+		t.Errorf("model = %v, want %q (forceModel should override)", m["model"], "databricks-proxy/gpt-5-4")
+	}
+}
+
+func TestPatchSetsModelWhenAbsent(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Write config with no model key.
+	existing := `{"theme": "dark"}`
+	if err := os.WriteFile(c.Path(), []byte(existing), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := c.Patch("http://127.0.0.1:9000", "gpt-5-4", "key", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	if m["model"] != "databricks-proxy/gpt-5-4" {
+		t.Errorf("model = %v, want %q (should set when absent)", m["model"], "databricks-proxy/gpt-5-4")
+	}
+}
+
+func TestSurgicalRestore(t *testing.T) {
 	c := setupTestConfig(t)
 
 	original := `{"theme": "dark", "fontSize": 14}`
@@ -116,16 +175,21 @@ func TestBackupRestore(t *testing.T) {
 		t.Fatalf("write original: %v", err)
 	}
 
-	// Backup.
-	if err := c.Backup(); err != nil {
-		t.Fatalf("Backup: %v", err)
-	}
-	if !c.HasBackup() {
-		t.Fatal("HasBackup should be true after Backup")
+	// Snapshot originals.
+	if err := c.SaveOriginals(); err != nil {
+		t.Fatalf("SaveOriginals: %v", err)
 	}
 
-	// Patch (overwrites the model key).
-	if err := c.Patch("http://127.0.0.1:5000", "test-model", "key"); err != nil {
+	// Write sentinel.
+	if err := c.WriteSentinel(); err != nil {
+		t.Fatalf("WriteSentinel: %v", err)
+	}
+	if !c.HasBackup() {
+		t.Fatal("HasBackup should be true after WriteSentinel")
+	}
+
+	// Patch.
+	if err := c.Patch("http://127.0.0.1:5000", "test-model", "key", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
@@ -135,28 +199,117 @@ func TestBackupRestore(t *testing.T) {
 		t.Fatalf("expected patched model, got %v", patched["model"])
 	}
 
-	// Restore.
+	// Surgical restore.
 	if err := c.Restore(); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	// Verify restored to original content.
-	data, _ := os.ReadFile(c.Path())
-	var restored map[string]interface{}
-	if err := json.Unmarshal(data, &restored); err != nil {
-		t.Fatalf("unmarshal restored: %v", err)
+	// Verify: model removed (was absent), user config preserved.
+	restored := readJSON(t, c.Path())
+	if restored["theme"] != "dark" {
+		t.Errorf("theme = %v, want %q", restored["theme"], "dark")
 	}
+	if _, exists := restored["model"]; exists {
+		t.Error("model should not exist after restore (was absent before patch)")
+	}
+	if _, exists := restored["provider"]; exists {
+		t.Error("provider should not exist after restore (was absent before patch)")
+	}
+
+	// Sentinel and sidecar should be removed.
+	if c.HasBackup() {
+		t.Error("HasBackup should be false after Restore")
+	}
+	if c.HasSidecar() {
+		t.Error("HasSidecar should be false after Restore")
+	}
+}
+
+func TestRestoreOnlyRemovesManagedKeys(t *testing.T) {
+	c := setupTestConfig(t)
+
+	original := `{"theme": "dark"}`
+	if err := os.WriteFile(c.Path(), []byte(original), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Snapshot + Patch.
+	if err := c.SaveOriginals(); err != nil {
+		t.Fatalf("SaveOriginals: %v", err)
+	}
+	if err := c.Patch("http://127.0.0.1:5000", "m", "k", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	// Simulate user adding new config mid-session.
+	config := readJSON(t, c.Path())
+	config["mcpServers"] = map[string]interface{}{"my-server": map[string]interface{}{"url": "http://localhost:3000"}}
+	config["newTheme"] = "solarized"
+	data, _ := json.MarshalIndent(config, "", "  ")
+	os.WriteFile(c.Path(), data, 0o600)
+
+	// Restore — should only remove managed keys, preserve user additions.
+	if err := c.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	restored := readJSON(t, c.Path())
+
+	// Original keys preserved.
 	if restored["theme"] != "dark" {
 		t.Errorf("theme = %v, want %q", restored["theme"], "dark")
 	}
 
-	// Backup file should be removed.
-	if c.HasBackup() {
-		t.Error("HasBackup should be false after Restore")
+	// Mid-session user additions preserved.
+	if restored["mcpServers"] == nil {
+		t.Error("mcpServers should survive restore (user added mid-session)")
+	}
+	if restored["newTheme"] != "solarized" {
+		t.Errorf("newTheme = %v, want %q (user added mid-session)", restored["newTheme"], "solarized")
+	}
+
+	// Managed keys removed.
+	if _, exists := restored["model"]; exists {
+		t.Error("model should be removed after restore")
+	}
+	if providers, ok := restored["provider"].(map[string]interface{}); ok {
+		if _, exists := providers["databricks-proxy"]; exists {
+			t.Error("databricks-proxy provider should be removed after restore")
+		}
 	}
 }
 
-func TestCrashRecovery(t *testing.T) {
+func TestRestorePreservesOriginalModel(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Config has an existing user model.
+	original := `{"model": "openai/gpt-4o", "theme": "dark"}`
+	if err := os.WriteFile(c.Path(), []byte(original), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Snapshot (captures model = "openai/gpt-4o").
+	if err := c.SaveOriginals(); err != nil {
+		t.Fatalf("SaveOriginals: %v", err)
+	}
+
+	// Force-patch with our model.
+	if err := c.Patch("http://127.0.0.1:5000", "m", "k", true); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	// Restore — should put user's model back.
+	if err := c.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	restored := readJSON(t, c.Path())
+	if restored["model"] != "openai/gpt-4o" {
+		t.Errorf("model = %v, want %q (should restore original)", restored["model"], "openai/gpt-4o")
+	}
+}
+
+func TestCrashRecoverySurgical(t *testing.T) {
 	c := setupTestConfig(t)
 
 	original := `{"theme": "light"}`
@@ -164,31 +317,39 @@ func TestCrashRecovery(t *testing.T) {
 		t.Fatalf("write original: %v", err)
 	}
 
-	// Simulate: backup was created, patch was applied, but no restore (crash).
-	if err := c.Backup(); err != nil {
-		t.Fatalf("Backup: %v", err)
+	// Simulate: SaveOriginals + sentinel + patch, but no Restore (crash).
+	if err := c.SaveOriginals(); err != nil {
+		t.Fatalf("SaveOriginals: %v", err)
 	}
-	if err := c.Patch("http://127.0.0.1:5000", "m", "k"); err != nil {
+	if err := c.WriteSentinel(); err != nil {
+		t.Fatalf("WriteSentinel: %v", err)
+	}
+	if err := c.Patch("http://127.0.0.1:5000", "m", "k", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
-	// Simulate crash — HasBackup should return true.
+	// Simulate crash — sidecar and sentinel should exist.
+	if !c.HasSidecar() {
+		t.Fatal("HasSidecar should be true after crash")
+	}
 	if !c.HasBackup() {
-		t.Fatal("HasBackup should be true after crash (no restore called)")
+		t.Fatal("HasBackup should be true after crash")
 	}
 
-	// New session recovers by calling Restore.
-	if err := c.Restore(); err != nil {
-		t.Fatalf("Restore: %v", err)
+	// New session creates a fresh Config instance (no in-memory originals).
+	c2 := NewWithPath(c.Path(), c.BackupPath())
+
+	// Recovery: Restore loads sidecar and surgically restores.
+	if err := c2.Restore(); err != nil {
+		t.Fatalf("Restore after crash: %v", err)
 	}
 
-	data, _ := os.ReadFile(c.Path())
-	var restored map[string]interface{}
-	if err := json.Unmarshal(data, &restored); err != nil {
-		t.Fatalf("unmarshal restored: %v", err)
-	}
+	restored := readJSON(t, c.Path())
 	if restored["theme"] != "light" {
 		t.Errorf("theme = %v, want %q after crash recovery", restored["theme"], "light")
+	}
+	if _, exists := restored["model"]; exists {
+		t.Error("model should be removed after crash recovery")
 	}
 }
 
@@ -196,7 +357,7 @@ func TestUpdateProxyURL(t *testing.T) {
 	c := setupTestConfig(t)
 
 	// Patch first.
-	if err := c.Patch("http://127.0.0.1:5000", "model-a", "key"); err != nil {
+	if err := c.Patch("http://127.0.0.1:5000", "model-a", "key", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
@@ -236,7 +397,7 @@ func TestInvalidJSONC(t *testing.T) {
 	}
 
 	// Patch should parse JSONC correctly.
-	if err := c.Patch("http://127.0.0.1:7000", "model-b", "key"); err != nil {
+	if err := c.Patch("http://127.0.0.1:7000", "model-b", "key", false); err != nil {
 		t.Fatalf("Patch with JSONC: %v", err)
 	}
 
