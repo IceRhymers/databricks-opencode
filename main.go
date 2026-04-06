@@ -155,7 +155,7 @@ func main() {
 
 	// --- Patch config.json to point OpenCode at the local proxy ---
 	cm := NewConfigManager()
-	if err := cm.Setup(proxyAddr, model, ""); err != nil {
+	if err := cm.Setup(proxyAddr, model, "databricks-proxy"); err != nil {
 		log.Fatalf("databricks-opencode: failed to patch config.json: %v", err)
 	}
 
