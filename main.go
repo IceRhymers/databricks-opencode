@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/IceRhymers/databricks-claude/pkg/authcheck"
@@ -27,7 +29,7 @@ import (
 var Version = "dev"
 
 func main() {
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, opencodeArgs := parseArgs(os.Args[1:])
+	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, opencodeArgs := parseArgs(os.Args[1:])
 
 	if showHelp {
 		handleHelp(upstream)
@@ -165,9 +167,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Verify opencode is on PATH before starting proxy.
-	if _, err := exec.LookPath("opencode"); err != nil {
-		log.Fatalf("databricks-opencode: opencode binary not found on PATH — install from https://opencode.ai")
+	// Verify opencode is on PATH before starting proxy (skip in headless mode).
+	if !headless {
+		if _, err := exec.LookPath("opencode"); err != nil {
+			log.Fatalf("databricks-opencode: opencode binary not found on PATH — install from https://opencode.ai")
+		}
 	}
 
 	// --- Bind to fixed port (or health-check existing owner) ---
@@ -215,7 +219,17 @@ func main() {
 
 	// --- Ensure config.json points at the local proxy (idempotent) ---
 	if err := EnsureConfig(jsonconfig.New(), proxyAddr, model, proxyAPIKey, modelExplicit); err != nil {
-		log.Fatalf("databricks-opencode: failed to configure opencode: %v", err)
+		if headless {
+			log.Printf("databricks-opencode: WARNING: failed to configure opencode: %v", err)
+		} else {
+			log.Fatalf("databricks-opencode: failed to configure opencode: %v", err)
+		}
+	}
+
+	// --- Headless mode: print proxy URL and block until signal ---
+	if headless {
+		runHeadless(proxyAddr, listener, isOwner, refcountPath)
+		return
 	}
 
 	// Set OPENAI_API_KEY as a placeholder — the proxy overwrites the
@@ -244,7 +258,7 @@ func main() {
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, opencodeArgs []string) {
+func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, opencodeArgs []string) {
 	knownFlags := map[string]bool{
 		"--verbose":       true,
 		"--version":       true,
@@ -258,6 +272,7 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 		"--tls-cert":      true,
 		"--tls-key":       true,
 		"--port":          true,
+		"--headless":      true,
 	}
 
 	i := 0
@@ -355,6 +370,8 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 					showHelp = true
 				case "--print-env":
 					printEnv = true
+				case "--headless":
+					headless = true
 				}
 				i++
 				continue
@@ -366,6 +383,20 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 		i++
 	}
 	return
+}
+
+// runHeadless starts the proxy without launching the opencode child process.
+// It prints the proxy URL to stdout and blocks until SIGINT or SIGTERM.
+func runHeadless(proxyURL string, ln net.Listener, isOwner bool, refcountPath string) {
+	fmt.Printf("PROXY_URL=%s\n", proxyURL)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	signal.Stop(sigCh)
+	n, _ := refcount.Release(refcountPath)
+	if n == 0 && isOwner {
+		ln.Close()
+	}
 }
 
 // handleHelp prints the databricks-opencode help section, then execs opencode --help.
@@ -389,6 +420,7 @@ Databricks-OpenCode Flags:
   --tls-cert string         Path to TLS certificate file (requires --tls-key)
   --tls-key string          Path to TLS private key file (requires --tls-cert)
   --port int                Local proxy port (default: 49155, saved for future sessions)
+  --headless            Start proxy without launching opencode (for IDE extensions)
   --version             Print version and exit
   --help, -h            Show this help message
 
