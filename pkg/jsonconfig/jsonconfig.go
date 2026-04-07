@@ -230,6 +230,31 @@ func (c *Config) Backup() error {
 	return c.WriteSentinel()
 }
 
+// NeedsConfig returns true if config.json needs to be written (or rewritten)
+// because the databricks-proxy provider's baseURL does not already match
+// proxyURL + "/v1". Returns true when the config file is missing or the
+// provider section is absent/different.
+func (c *Config) NeedsConfig(proxyURL string) bool {
+	config, err := c.readConfig()
+	if err != nil {
+		return true
+	}
+	providers, _ := config["provider"].(map[string]interface{})
+	if providers == nil {
+		return true
+	}
+	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
+	if dbProxy == nil {
+		return true
+	}
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		return true
+	}
+	baseURL, _ := options["baseURL"].(string)
+	return baseURL != proxyURL+"/v1"
+}
+
 // UpdateProxyURL updates only the baseURL in the existing databricks-proxy provider.
 func (c *Config) UpdateProxyURL(proxyURL string) error {
 	config, err := c.readConfig()
