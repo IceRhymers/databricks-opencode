@@ -131,10 +131,20 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 	}
 
 	// Inject the databricks-proxy provider (always overwrite — we own this key).
+	// Uses @ai-sdk/anthropic with authToken (sends Authorization: Bearer header
+	// which the local proxy expects, vs apiKey which sends x-api-key).
 	providers["databricks-proxy"] = map[string]interface{}{
-		"apiKey":  apiKey,
-		"models":  []interface{}{modelName},
-		"baseURL": proxyURL,
+		"npm":  "@ai-sdk/anthropic",
+		"name": "Databricks AI Gateway",
+		"options": map[string]interface{}{
+			"baseURL":   proxyURL + "/v1",
+			"authToken": apiKey,
+		},
+		"models": map[string]interface{}{
+			modelName: map[string]interface{}{
+				"name": modelName,
+			},
+		},
 	}
 	config["provider"] = providers
 
@@ -229,7 +239,12 @@ func (c *Config) UpdateProxyURL(proxyURL string) error {
 		return fmt.Errorf("no databricks-proxy provider in config")
 	}
 
-	dbProxy["baseURL"] = proxyURL
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		options = make(map[string]interface{})
+	}
+	options["baseURL"] = proxyURL
+	dbProxy["options"] = options
 	providers["databricks-proxy"] = dbProxy
 	config["provider"] = providers
 

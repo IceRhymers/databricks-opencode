@@ -49,8 +49,12 @@ func TestConfigManagerSetupCreatesConfig(t *testing.T) {
 	if dbProxy == nil {
 		t.Fatal("databricks-proxy provider not found")
 	}
-	if dbProxy["baseURL"] != "http://127.0.0.1:9000" {
-		t.Errorf("baseURL = %v, want %q", dbProxy["baseURL"], "http://127.0.0.1:9000")
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		t.Fatal("databricks-proxy options not found")
+	}
+	if options["baseURL"] != "http://127.0.0.1:9000/v1" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000/v1")
 	}
 }
 

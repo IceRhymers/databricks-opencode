@@ -50,11 +50,25 @@ func TestPatchEmptyFile(t *testing.T) {
 	if dbProxy == nil {
 		t.Fatal("databricks-proxy provider not found")
 	}
-	if dbProxy["baseURL"] != "http://127.0.0.1:9000" {
-		t.Errorf("baseURL = %v, want %q", dbProxy["baseURL"], "http://127.0.0.1:9000")
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		t.Fatal("databricks-proxy options not found")
 	}
-	if dbProxy["apiKey"] != "databricks-proxy" {
-		t.Errorf("apiKey = %v, want %q", dbProxy["apiKey"], "databricks-proxy")
+	if options["baseURL"] != "http://127.0.0.1:9000/v1" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000/v1")
+	}
+	if options["authToken"] != "databricks-proxy" {
+		t.Errorf("options.authToken = %v, want %q", options["authToken"], "databricks-proxy")
+	}
+	if dbProxy["npm"] != "@ai-sdk/anthropic" {
+		t.Errorf("npm = %v, want %q", dbProxy["npm"], "@ai-sdk/anthropic")
+	}
+	models, _ := dbProxy["models"].(map[string]interface{})
+	if models == nil {
+		t.Fatal("databricks-proxy models not found")
+	}
+	if models["gpt-5-4"] == nil {
+		t.Error("models[\"gpt-5-4\"] not found")
 	}
 }
 
@@ -369,8 +383,12 @@ func TestUpdateProxyURL(t *testing.T) {
 	m := readJSON(t, c.Path())
 	providers, _ := m["provider"].(map[string]interface{})
 	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
-	if dbProxy["baseURL"] != "http://127.0.0.1:6000" {
-		t.Errorf("baseURL = %v, want %q", dbProxy["baseURL"], "http://127.0.0.1:6000")
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		t.Fatal("databricks-proxy options not found after UpdateProxyURL")
+	}
+	if options["baseURL"] != "http://127.0.0.1:6000" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:6000")
 	}
 
 	// Model should be unchanged.

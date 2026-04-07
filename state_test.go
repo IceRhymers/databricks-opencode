@@ -103,7 +103,7 @@ func TestModelResolution_SavedState(t *testing.T) {
 		}
 	}
 	if model == "" {
-		model = "databricks-gpt-5-4"
+		model = "databricks-claude-sonnet-4-6"
 	}
 
 	if model != "saved-model" {
@@ -125,11 +125,11 @@ func TestModelResolution_DefaultWhenNoState(t *testing.T) {
 		}
 	}
 	if model == "" {
-		model = "databricks-gpt-5-4"
+		model = "databricks-claude-sonnet-4-6"
 	}
 
-	if model != "databricks-gpt-5-4" {
-		t.Errorf("model = %q, want %q (should use default)", model, "databricks-gpt-5-4")
+	if model != "databricks-claude-sonnet-4-6" {
+		t.Errorf("model = %q, want %q (should use default)", model, "databricks-claude-sonnet-4-6")
 	}
 }
 
