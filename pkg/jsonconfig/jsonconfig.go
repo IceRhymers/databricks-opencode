@@ -131,14 +131,14 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 	}
 
 	// Inject the databricks-proxy provider (always overwrite — we own this key).
-	// Uses @ai-sdk/anthropic with authToken (sends Authorization: Bearer header
-	// which the local proxy expects, vs apiKey which sends x-api-key).
+	// Uses @ai-sdk/anthropic; the proxy overwrites auth headers with the real
+	// Databricks token, so the apiKey here is just a placeholder.
 	providers["databricks-proxy"] = map[string]interface{}{
 		"npm":  "@ai-sdk/anthropic",
 		"name": "Databricks AI Gateway",
 		"options": map[string]interface{}{
-			"baseURL":   proxyURL + "/v1",
-			"authToken": apiKey,
+			"baseURL": proxyURL + "/v1",
+			"apiKey":  apiKey,
 		},
 		// Register all available Databricks Claude models so users can switch
 		// between them in OpenCode's model picker without manual config edits.
@@ -252,7 +252,16 @@ func (c *Config) NeedsConfig(proxyURL string) bool {
 		return true
 	}
 	baseURL, _ := options["baseURL"].(string)
-	return baseURL != proxyURL+"/v1"
+	if baseURL != proxyURL+"/v1" {
+		return true
+	}
+	// Detect stale auth key name (e.g. authToken → apiKey migration).
+	if _, ok := options["apiKey"]; !ok {
+		return true
+	}
+	// Detect stale npm package.
+	npm, _ := dbProxy["npm"].(string)
+	return npm != "@ai-sdk/anthropic"
 }
 
 // UpdateProxyURL updates only the baseURL in the existing databricks-proxy provider.

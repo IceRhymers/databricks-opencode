@@ -57,8 +57,8 @@ func TestPatchEmptyFile(t *testing.T) {
 	if options["baseURL"] != "http://127.0.0.1:9000/v1" {
 		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000/v1")
 	}
-	if options["authToken"] != "databricks-proxy" {
-		t.Errorf("options.authToken = %v, want %q", options["authToken"], "databricks-proxy")
+	if options["apiKey"] != "databricks-proxy" {
+		t.Errorf("options.apiKey = %v, want %q", options["apiKey"], "databricks-proxy")
 	}
 	if dbProxy["npm"] != "@ai-sdk/anthropic" {
 		t.Errorf("npm = %v, want %q", dbProxy["npm"], "@ai-sdk/anthropic")
