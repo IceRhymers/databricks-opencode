@@ -16,6 +16,7 @@ import (
 	"github.com/IceRhymers/databricks-claude/pkg/portbind"
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
 	"github.com/IceRhymers/databricks-claude/pkg/refcount"
+	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
 // Version is set at build time via -ldflags.
@@ -205,8 +206,7 @@ func main() {
 	}
 
 	// --- Ensure config.json points at the local proxy (idempotent) ---
-	cm := NewConfigManager()
-	if err := EnsureConfig(cm.config, proxyAddr, model, proxyAPIKey, modelExplicit); err != nil {
+	if err := EnsureConfig(jsonconfig.New(), proxyAddr, model, proxyAPIKey, modelExplicit); err != nil {
 		log.Fatalf("databricks-opencode: failed to configure opencode: %v", err)
 	}
 
