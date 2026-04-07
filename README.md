@@ -13,13 +13,22 @@ A Go binary that wraps the [OpenCode CLI](https://opencode.ai) with Databricks A
 
 ## Installation
 
+### Via Homebrew (recommended)
+
+```bash
+brew tap IceRhymers/tap
+brew install databricks-opencode
 ```
+
+### From source
+
+```bash
 go install github.com/IceRhymers/databricks-opencode@latest
 ```
 
 Or build from source:
 
-```
+```bash
 git clone https://github.com/IceRhymers/databricks-opencode.git
 cd databricks-opencode
 make build
