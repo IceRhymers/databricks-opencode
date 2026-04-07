@@ -28,6 +28,8 @@ func NewProxyServer(config *ProxyConfig) http.Handler {
 		APIKey:            config.APIKey,
 		TLSCertFile:       config.TLSCertFile,
 		TLSKeyFile:        config.TLSKeyFile,
+		ToolName:          "databricks-opencode",
+		Version:           Version,
 	})
 }
 

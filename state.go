@@ -7,11 +7,26 @@ import (
 	"path/filepath"
 )
 
+// defaultPort is the fixed port used by databricks-opencode when no override is given.
+const defaultPort = 49155
+
 // persistentState is the JSON schema for ~/.config/opencode/.databricks-opencode.json.
 // This file survives config restore and persists across sessions.
 type persistentState struct {
 	Profile string `json:"profile,omitempty"`
 	Model   string `json:"model,omitempty"`
+	Port    int    `json:"port,omitempty"`
+}
+
+// resolvePort returns the port to use: flag > saved state > defaultPort.
+func resolvePort(portFlag int, state persistentState) int {
+	if portFlag > 0 {
+		return portFlag
+	}
+	if state.Port > 0 {
+		return state.Port
+	}
+	return defaultPort
 }
 
 // statePath returns the path to the persistent state file.

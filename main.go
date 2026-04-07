@@ -8,17 +8,21 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/IceRhymers/databricks-claude/pkg/authcheck"
+	"github.com/IceRhymers/databricks-claude/pkg/portbind"
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
+	"github.com/IceRhymers/databricks-claude/pkg/refcount"
 )
 
 // Version is set at build time via -ldflags.
 var Version = "dev"
 
 func main() {
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, opencodeArgs := parseArgs(os.Args[1:])
+	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, opencodeArgs := parseArgs(os.Args[1:])
 
 	if showHelp {
 		handleHelp(upstream)
@@ -105,6 +109,21 @@ func main() {
 		log.Fatalf("databricks-opencode: auth failed: %v", err)
 	}
 
+	// --- Load state and resolve port ---
+	// Resolution chain: --port flag → saved state → defaultPort (49155).
+	savedState := loadState()
+	port := resolvePort(portFlag, savedState)
+	portExplicit := portFlag > 0
+	if portExplicit {
+		savedState.Port = port
+		if err := saveState(savedState); err != nil {
+			log.Printf("databricks-opencode: failed to save port: %v", err)
+		} else {
+			log.Printf("databricks-opencode: saved port %d for future sessions", port)
+		}
+	}
+	log.Printf("databricks-opencode: using port: %d", port)
+
 	// --- TLS validation ---
 	if err := proxy.ValidateTLSConfig(tlsCert, tlsKey); err != nil {
 		log.Fatalf("databricks-opencode: %v", err)
@@ -146,24 +165,32 @@ func main() {
 		log.Fatalf("databricks-opencode: opencode binary not found on PATH — install from https://opencode.ai")
 	}
 
-	// --- Start local proxy so the token stays fresh for the entire session ---
-	// The proxy uses tokencache to refresh the Databricks OAuth token automatically
-	// (5-min buffer before expiry). OpenCode talks to the proxy via config.json;
-	// the proxy injects a fresh Bearer token on every outbound request to the
-	// AI Gateway. HTTP/SSE only — OpenCode uses SSE, no WebSocket needed.
-	proxyHandler := NewProxyServer(&ProxyConfig{
-		InferenceUpstream: gatewayURL,
-		TokenProvider:     tp,
-		Verbose:           verbose,
-		APIKey:            proxyAPIKey,
-		TLSCertFile:       tlsCert,
-		TLSKeyFile:        tlsKey,
-	})
-	listener, err := StartProxy(proxyHandler, tlsCert, tlsKey)
+	// --- Bind to fixed port (or health-check existing owner) ---
+	listener, isOwner, err := portbind.Bind("databricks-opencode", port)
 	if err != nil {
-		log.Fatalf("databricks-opencode: failed to start proxy: %v", err)
+		log.Fatalf("databricks-opencode: failed to bind port %d: %v", port, err)
 	}
-	defer listener.Close()
+
+	// --- If we own the listener, start the proxy on it ---
+	if isOwner {
+		proxyHandler := NewProxyServer(&ProxyConfig{
+			InferenceUpstream: gatewayURL,
+			TokenProvider:     tp,
+			Verbose:           verbose,
+			APIKey:            proxyAPIKey,
+			TLSCertFile:       tlsCert,
+			TLSKeyFile:        tlsKey,
+		})
+		servedLn, err := proxy.Serve(listener, proxyHandler, tlsCert, tlsKey)
+		if err != nil {
+			log.Fatalf("databricks-opencode: failed to start proxy: %v", err)
+		}
+		listener = servedLn
+		log.Printf("databricks-opencode: proxy owner on :%d", port)
+	} else {
+		log.Printf("databricks-opencode: joining existing proxy on :%d", port)
+	}
+
 	proxyScheme := "http://"
 	if tlsCert != "" && tlsKey != "" {
 		proxyScheme = "https://"
@@ -171,10 +198,16 @@ func main() {
 	proxyAddr := proxyScheme + listener.Addr().String()
 	log.Printf("databricks-opencode: local proxy %s -> %s", proxyAddr, gatewayURL)
 
-	// --- Patch config.json to point OpenCode at the local proxy ---
+	// --- Acquire refcount ---
+	refcountPath := filepath.Join(os.TempDir(), fmt.Sprintf(".databricks-opencode-sessions-%d", port))
+	if err := refcount.Acquire(refcountPath); err != nil {
+		log.Printf("databricks-opencode: refcount acquire warning: %v", err)
+	}
+
+	// --- Ensure config.json points at the local proxy (idempotent) ---
 	cm := NewConfigManager()
-	if err := cm.Setup(proxyAddr, model, "databricks-proxy", modelExplicit); err != nil {
-		log.Fatalf("databricks-opencode: failed to patch config.json: %v", err)
+	if err := EnsureConfig(cm.config, proxyAddr, model, proxyAPIKey, modelExplicit); err != nil {
+		log.Fatalf("databricks-opencode: failed to configure opencode: %v", err)
 	}
 
 	// Set OPENAI_API_KEY as a placeholder — the proxy overwrites the
@@ -184,21 +217,26 @@ func main() {
 	log.Printf("databricks-opencode: launching opencode")
 
 	// --- Run opencode as a child process (parent stays alive to serve the proxy) ---
-	exitCode, err := RunOpenCode(context.Background(), opencodeArgs)
+	exitCode, runErr := RunOpenCode(context.Background(), opencodeArgs)
 
-	// Explicitly restore config.json before exiting. This is NOT deferred
-	// because os.Exit() skips deferred functions — we must restore before
-	// exit to avoid leaving config.json pointing at a dead proxy.
-	cm.Restore()
-
+	// --- Release refcount; if last session and owner, close listener ---
+	remaining, err := refcount.Release(refcountPath)
 	if err != nil {
-		log.Fatalf("databricks-opencode: opencode failed: %v", err)
+		log.Printf("databricks-opencode: refcount release warning: %v", err)
+	}
+	if remaining == 0 && isOwner {
+		listener.Close()
+		log.Printf("databricks-opencode: last session, proxy shut down")
+	}
+
+	if runErr != nil {
+		log.Fatalf("databricks-opencode: opencode failed: %v", runErr)
 	}
 	os.Exit(exitCode)
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, opencodeArgs []string) {
+func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, opencodeArgs []string) {
 	knownFlags := map[string]bool{
 		"--verbose":       true,
 		"--version":       true,
@@ -211,6 +249,7 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 		"--proxy-api-key": true,
 		"--tls-cert":      true,
 		"--tls-key":       true,
+		"--port":          true,
 	}
 
 	i := 0
@@ -293,6 +332,13 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 						i++
 						tlsKey = args[i]
 					}
+				case "--port":
+					if value != "" {
+						port, _ = strconv.Atoi(value)
+					} else if i+1 < len(args) {
+						i++
+						port, _ = strconv.Atoi(args[i])
+					}
 				case "--verbose":
 					verbose = true
 				case "--version":
@@ -334,6 +380,7 @@ Databricks-OpenCode Flags:
   --proxy-api-key string    Require this API key on all proxy requests (default: disabled)
   --tls-cert string         Path to TLS certificate file (requires --tls-key)
   --tls-key string          Path to TLS private key file (requires --tls-cert)
+  --port int                Local proxy port (default: 49155, saved for future sessions)
   --version             Print version and exit
   --help, -h            Show this help message
 
