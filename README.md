@@ -69,3 +69,4 @@ No shell alias needed — `databricks-opencode` is a standalone binary.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
