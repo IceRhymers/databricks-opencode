@@ -327,7 +327,7 @@ func captureStdout(fn func()) string {
 
 func TestHandlePrintEnv_DapiTokenRedacted(t *testing.T) {
 	out := captureStdout(func() {
-		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "dapi-abc123secret", "DEFAULT")
+		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "dapi-abc123secret", "DEFAULT", "databricks-claude-sonnet-4-6")
 	})
 	if !strings.Contains(out, "dapi-***") {
 		t.Errorf("expected dapi token to appear as 'dapi-***', got:\n%s", out)
@@ -339,7 +339,7 @@ func TestHandlePrintEnv_DapiTokenRedacted(t *testing.T) {
 
 func TestHandlePrintEnv_NonDapiTokenRedacted(t *testing.T) {
 	out := captureStdout(func() {
-		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "eyJhbGciOiJSUzI1NiJ9", "DEFAULT")
+		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "eyJhbGciOiJSUzI1NiJ9", "DEFAULT", "databricks-claude-sonnet-4-6")
 	})
 	if !strings.Contains(out, "**** (redacted)") {
 		t.Errorf("expected non-dapi token to appear as '**** (redacted)', got:\n%s", out)
@@ -348,7 +348,7 @@ func TestHandlePrintEnv_NonDapiTokenRedacted(t *testing.T) {
 
 func TestHandlePrintEnv_ContainsProfile(t *testing.T) {
 	out := captureStdout(func() {
-		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "tok", "aidev")
+		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "tok", "aidev", "databricks-claude-sonnet-4-6")
 	})
 	if !strings.Contains(out, "aidev") {
 		t.Errorf("expected output to contain profile 'aidev', got:\n%s", out)
@@ -358,7 +358,7 @@ func TestHandlePrintEnv_ContainsProfile(t *testing.T) {
 func TestHandlePrintEnv_ContainsDatabricksHost(t *testing.T) {
 	host := "https://dbc-abc123.cloud.databricks.com"
 	out := captureStdout(func() {
-		handlePrintEnv(host, "https://gw.example.com/openai/v1", "tok", "DEFAULT")
+		handlePrintEnv(host, "https://gw.example.com/openai/v1", "tok", "DEFAULT", "databricks-claude-sonnet-4-6")
 	})
 	if !strings.Contains(out, host) {
 		t.Errorf("expected output to contain DATABRICKS_HOST %q, got:\n%s", host, out)
@@ -368,10 +368,20 @@ func TestHandlePrintEnv_ContainsDatabricksHost(t *testing.T) {
 func TestHandlePrintEnv_ContainsOpenAIBaseURL(t *testing.T) {
 	baseURL := "https://gw.example.com/openai/v1"
 	out := captureStdout(func() {
-		handlePrintEnv("https://dbc.example.com", baseURL, "tok", "DEFAULT")
+		handlePrintEnv("https://dbc.example.com", baseURL, "tok", "DEFAULT", "databricks-claude-sonnet-4-6")
 	})
 	if !strings.Contains(out, baseURL) {
 		t.Errorf("expected output to contain OPENAI_BASE_URL %q, got:\n%s", baseURL, out)
+	}
+}
+
+func TestHandlePrintEnv_ContainsModel(t *testing.T) {
+	model := "databricks-claude-sonnet-4-6"
+	out := captureStdout(func() {
+		handlePrintEnv("https://dbc.example.com", "https://gw.example.com/openai/v1", "tok", "DEFAULT", model)
+	})
+	if !strings.Contains(out, model) {
+		t.Errorf("expected output to contain Model %q, got:\n%s", model, out)
 	}
 }
 
