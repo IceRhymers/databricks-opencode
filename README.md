@@ -65,4 +65,4 @@ No shell alias needed — `databricks-opencode` is a standalone binary.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
