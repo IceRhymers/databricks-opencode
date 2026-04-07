@@ -55,12 +55,12 @@ func main() {
 	}
 
 	// --- Resolve profile ---
-	// Resolution chain: --profile flag → env var → saved state → "DEFAULT".
+	// Resolution chain: --profile flag → saved state → "DEFAULT".
+	// The env var DATABRICKS_CONFIG_PROFILE is intentionally NOT checked here
+	// because external tools (e.g. Claude's settings.json) can inject it into
+	// the process environment, silently overriding the user's saved proxy profile.
 	// When --profile is explicitly passed, save it for future sessions.
 	profileExplicit := profile != ""
-	if profile == "" {
-		profile = os.Getenv("DATABRICKS_CONFIG_PROFILE")
-	}
 	if profile == "" {
 		if saved := loadState(); saved.Profile != "" {
 			profile = saved.Profile
