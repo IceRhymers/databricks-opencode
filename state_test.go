@@ -133,6 +133,27 @@ func TestModelResolution_DefaultWhenNoState(t *testing.T) {
 	}
 }
 
+func TestResolvePort_FlagWins(t *testing.T) {
+	port := resolvePort(8080, persistentState{Port: 9000})
+	if port != 8080 {
+		t.Errorf("resolvePort = %d, want 8080 (flag should win)", port)
+	}
+}
+
+func TestResolvePort_StateWins(t *testing.T) {
+	port := resolvePort(0, persistentState{Port: 9000})
+	if port != 9000 {
+		t.Errorf("resolvePort = %d, want 9000 (state should win)", port)
+	}
+}
+
+func TestResolvePort_Default(t *testing.T) {
+	port := resolvePort(0, persistentState{})
+	if port != defaultPort {
+		t.Errorf("resolvePort = %d, want %d (should use default)", port, defaultPort)
+	}
+}
+
 func TestModelExplicit_OverwritesSavedState(t *testing.T) {
 	dir := t.TempDir()
 	orig := statePath
