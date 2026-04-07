@@ -218,7 +218,14 @@ func main() {
 	}
 
 	// --- Ensure config.json points at the local proxy (idempotent) ---
-	if err := EnsureConfig(jsonconfig.New(), proxyAddr, model, proxyAPIKey, modelExplicit); err != nil {
+	// Use proxyAPIKey if explicitly set; otherwise use a fixed placeholder.
+	// The proxy rewrites auth headers with a live Databricks token — the
+	// value here just needs to be non-empty for the @ai-sdk/anthropic provider.
+	configAPIKey := proxyAPIKey
+	if configAPIKey == "" {
+		configAPIKey = "databricks-proxy"
+	}
+	if err := EnsureConfig(jsonconfig.New(), proxyAddr, model, configAPIKey, modelExplicit); err != nil {
 		if headless {
 			log.Printf("databricks-opencode: WARNING: failed to configure opencode: %v", err)
 		} else {
@@ -231,10 +238,6 @@ func main() {
 		runHeadless(proxyAddr, listener, isOwner, refcountPath)
 		return
 	}
-
-	// Set OPENAI_API_KEY as a placeholder — the proxy overwrites the
-	// Authorization header with a live Databricks token per request.
-	os.Setenv("OPENAI_API_KEY", "databricks-proxy")
 
 	log.Printf("databricks-opencode: launching opencode")
 
@@ -403,7 +406,7 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, refcountPath st
 func handleHelp(upstreamBinary string) {
 	fmt.Printf(`databricks-opencode v%s — Databricks AI Gateway wrapper for OpenCode CLI
 
-Patches ~/.config/opencode/config.json and runs a local proxy so the OpenCode CLI
+Patches ~/.config/opencode/opencode.json and runs a local proxy so the OpenCode CLI
 authenticates through a Databricks AI Gateway endpoint with live token refresh.
 
 Usage:
@@ -521,8 +524,8 @@ func handlePrintEnv(databricksHost, openaiBaseURL, token, profile, model string)
   Profile:           %s
   Model:             %s
   DATABRICKS_HOST:   %s
-  OPENAI_BASE_URL:   %s
-  OPENAI_API_KEY:    %s
-  OpenCode binary:   %s
+  ANTHROPIC_BASE_URL: %s
+  Auth Token:         %s
+  OpenCode binary:    %s
 `, profile, model, databricksHost, openaiBaseURL, redacted, opencodePath)
 }
