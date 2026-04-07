@@ -157,7 +157,7 @@ func main() {
 
 	// --- Print env and exit if requested ---
 	if printEnv {
-		handlePrintEnv(host, gatewayURL, initialToken, profile)
+		handlePrintEnv(host, gatewayURL, initialToken, profile, model)
 		os.Exit(0)
 	}
 
@@ -409,7 +409,7 @@ OpenCode CLI Options:
 }
 
 // handlePrintEnv prints resolved configuration with the token redacted.
-func handlePrintEnv(databricksHost, openaiBaseURL, token, profile string) {
+func handlePrintEnv(databricksHost, openaiBaseURL, token, profile, model string) {
 	redacted := "**** (redacted)"
 	if strings.HasPrefix(token, "dapi-") {
 		redacted = "dapi-***"
@@ -422,9 +422,10 @@ func handlePrintEnv(databricksHost, openaiBaseURL, token, profile string) {
 
 	fmt.Printf(`databricks-opencode configuration:
   Profile:           %s
+  Model:             %s
   DATABRICKS_HOST:   %s
   OPENAI_BASE_URL:   %s
   OPENAI_API_KEY:    %s
   OpenCode binary:   %s
-`, profile, databricksHost, openaiBaseURL, redacted, opencodePath)
+`, profile, model, databricksHost, openaiBaseURL, redacted, opencodePath)
 }
