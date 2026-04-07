@@ -1,5 +1,8 @@
 # databricks-opencode
 
+> **Disclaimer:** This is an unofficial, community-built workaround to enable Databricks OAuth SSO authentication with this AI coding tool. It is not supported, endorsed, or recognized by Databricks. Use at your own risk.
+
+
 A Go binary that wraps the [OpenCode CLI](https://opencode.ai) with Databricks AI Gateway OAuth authentication. It patches `~/.config/opencode/opencode.json`, starts a local token-refreshing proxy, and launches OpenCode — so every request is authenticated through your Databricks workspace without any manual token management.
 
 ## Prerequisites
