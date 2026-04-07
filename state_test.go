@@ -65,3 +65,102 @@ func TestSaveState_OverwritesPrevious(t *testing.T) {
 		t.Errorf("got profile %q, want %q", s.Profile, "second")
 	}
 }
+
+func TestSaveAndLoadState_Model(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// Save model.
+	if err := saveState(persistentState{Profile: "dev", Model: "my-model"}); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	s := loadState()
+	if s.Model != "my-model" {
+		t.Errorf("got model %q, want %q", s.Model, "my-model")
+	}
+	if s.Profile != "dev" {
+		t.Errorf("got profile %q, want %q", s.Profile, "dev")
+	}
+}
+
+func TestModelResolution_SavedState(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// Save a model to state.
+	saveState(persistentState{Model: "saved-model"})
+
+	// Simulate resolution: no --model flag (empty string).
+	model := ""
+	if model == "" {
+		if saved := loadState(); saved.Model != "" {
+			model = saved.Model
+		}
+	}
+	if model == "" {
+		model = "databricks-claude-sonnet-4-6"
+	}
+
+	if model != "saved-model" {
+		t.Errorf("model = %q, want %q (should use saved state)", model, "saved-model")
+	}
+}
+
+func TestModelResolution_DefaultWhenNoState(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// No saved state — should fall through to default.
+	model := ""
+	if model == "" {
+		if saved := loadState(); saved.Model != "" {
+			model = saved.Model
+		}
+	}
+	if model == "" {
+		model = "databricks-claude-sonnet-4-6"
+	}
+
+	if model != "databricks-claude-sonnet-4-6" {
+		t.Errorf("model = %q, want %q (should use default)", model, "databricks-claude-sonnet-4-6")
+	}
+}
+
+func TestModelExplicit_OverwritesSavedState(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// Save initial model.
+	saveState(persistentState{Profile: "dev", Model: "old-model"})
+
+	// Simulate explicit --model flag.
+	model := "new-model"
+	modelExplicit := model != ""
+
+	if modelExplicit {
+		saved := loadState()
+		saved.Model = model
+		if err := saveState(saved); err != nil {
+			t.Fatalf("saveState: %v", err)
+		}
+	}
+
+	// Verify it was saved.
+	s := loadState()
+	if s.Model != "new-model" {
+		t.Errorf("got model %q, want %q", s.Model, "new-model")
+	}
+	// Profile should be preserved.
+	if s.Profile != "dev" {
+		t.Errorf("got profile %q, want %q (should preserve)", s.Profile, "dev")
+	}
+}

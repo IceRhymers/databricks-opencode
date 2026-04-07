@@ -11,6 +11,7 @@ import (
 // This file survives config restore and persists across sessions.
 type persistentState struct {
 	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model,omitempty"`
 }
 
 // statePath returns the path to the persistent state file.

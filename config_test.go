@@ -34,7 +34,7 @@ func readJSONFile(t *testing.T, path string) map[string]interface{} {
 func TestConfigManagerSetupCreatesConfig(t *testing.T) {
 	cm, _ := setupTestConfigManager(t)
 
-	if err := cm.Setup("http://127.0.0.1:9000", "gpt-5-4", "databricks-proxy"); err != nil {
+	if err := cm.Setup("http://127.0.0.1:9000", "gpt-5-4", "databricks-proxy", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -49,8 +49,12 @@ func TestConfigManagerSetupCreatesConfig(t *testing.T) {
 	if dbProxy == nil {
 		t.Fatal("databricks-proxy provider not found")
 	}
-	if dbProxy["baseURL"] != "http://127.0.0.1:9000" {
-		t.Errorf("baseURL = %v, want %q", dbProxy["baseURL"], "http://127.0.0.1:9000")
+	options, _ := dbProxy["options"].(map[string]interface{})
+	if options == nil {
+		t.Fatal("databricks-proxy options not found")
+	}
+	if options["baseURL"] != "http://127.0.0.1:9000/v1" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000/v1")
 	}
 }
 
@@ -63,7 +67,7 @@ func TestConfigManagerSetupPreservesExisting(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := cm.Setup("http://127.0.0.1:8080", "model-a", "key"); err != nil {
+	if err := cm.Setup("http://127.0.0.1:8080", "model-a", "key", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -91,7 +95,7 @@ func TestConfigManagerRestore(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := cm.Setup("http://127.0.0.1:5000", "m", "k"); err != nil {
+	if err := cm.Setup("http://127.0.0.1:5000", "m", "k", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -101,15 +105,20 @@ func TestConfigManagerRestore(t *testing.T) {
 		t.Fatal("expected model after patch")
 	}
 
+	// Simulate user adding config mid-session.
+	patched["mcpServers"] = map[string]interface{}{"test": "value"}
+	data, _ := json.MarshalIndent(patched, "", "  ")
+	os.WriteFile(cm.config.Path(), data, 0o600)
+
 	// Restore.
 	cm.Restore()
 
-	data, err := os.ReadFile(cm.config.Path())
+	rdata, err := os.ReadFile(cm.config.Path())
 	if err != nil {
 		t.Fatalf("read restored: %v", err)
 	}
 	var restored map[string]interface{}
-	if err := json.Unmarshal(data, &restored); err != nil {
+	if err := json.Unmarshal(rdata, &restored); err != nil {
 		t.Fatalf("unmarshal restored: %v", err)
 	}
 	if restored["theme"] != "dark" {
@@ -117,6 +126,10 @@ func TestConfigManagerRestore(t *testing.T) {
 	}
 	if restored["model"] != nil {
 		t.Error("model should not exist after restore")
+	}
+	// Mid-session user changes should survive surgical restore.
+	if restored["mcpServers"] == nil {
+		t.Error("mcpServers should survive surgical restore (user added mid-session)")
 	}
 }
 
@@ -129,22 +142,57 @@ func TestConfigManagerCrashRecovery(t *testing.T) {
 	}
 
 	// Simulate first session: setup but no restore (crash).
-	if err := cm.Setup("http://127.0.0.1:5000", "m", "k"); err != nil {
+	if err := cm.Setup("http://127.0.0.1:5000", "m", "k", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
-	// Verify backup exists (simulating crash — no Restore called).
-	if !cm.config.HasBackup() {
-		t.Fatal("backup should exist after setup")
+	// Verify sidecar exists (simulating crash — no Restore called).
+	if !cm.config.HasSidecar() {
+		t.Fatal("sidecar should exist after setup")
 	}
 
-	// New session setup should recover: restore first, then re-patch.
-	if err := cm.Setup("http://127.0.0.1:6000", "m2", "k2"); err != nil {
+	// New session setup should recover: surgical restore first, then re-patch.
+	if err := cm.Setup("http://127.0.0.1:6000", "m2", "k2", false); err != nil {
 		t.Fatalf("Setup after crash: %v", err)
 	}
 
 	m := readJSONFile(t, cm.config.Path())
 	if m["model"] != "databricks-proxy/m2" {
 		t.Errorf("model = %v, want %q", m["model"], "databricks-proxy/m2")
+	}
+
+	// Original user config should still be there.
+	if m["theme"] != "light" {
+		t.Errorf("theme = %v, want %q after crash recovery", m["theme"], "light")
+	}
+}
+
+func TestConfigManagerPreservesUserModel(t *testing.T) {
+	cm, _ := setupTestConfigManager(t)
+
+	// User has their own model configured.
+	original := `{"model": "openai/gpt-4o", "theme": "dark"}`
+	if err := os.WriteFile(cm.config.Path(), []byte(original), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Setup without forceModel — should preserve user's model.
+	if err := cm.Setup("http://127.0.0.1:5000", "gpt-5-4", "k", false); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	m := readJSONFile(t, cm.config.Path())
+	if m["model"] != "openai/gpt-4o" {
+		t.Errorf("model = %v, want %q (should preserve user model)", m["model"], "openai/gpt-4o")
+	}
+
+	// Restore — user's model should still be there.
+	cm.Restore()
+
+	rdata, _ := os.ReadFile(cm.config.Path())
+	var restored map[string]interface{}
+	json.Unmarshal(rdata, &restored)
+	if restored["model"] != "openai/gpt-4o" {
+		t.Errorf("model = %v, want %q after restore", restored["model"], "openai/gpt-4o")
 	}
 }

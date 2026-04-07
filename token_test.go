@@ -339,7 +339,7 @@ func TestConstructGatewayURL_WithWorkspaceID(t *testing.T) {
 	defer srv.Close()
 
 	got := ConstructGatewayURL(srv.URL, "test-token")
-	want := "https://9876543210.ai-gateway.cloud.databricks.com/openai/v1"
+	want := "https://9876543210.ai-gateway.cloud.databricks.com/anthropic"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -353,7 +353,7 @@ func TestConstructGatewayURL_Fallback(t *testing.T) {
 	defer srv.Close()
 
 	got := ConstructGatewayURL(srv.URL, "bad-token")
-	want := srv.URL + "/serving-endpoints/codex/openai/v1"
+	want := srv.URL + "/serving-endpoints/anthropic"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

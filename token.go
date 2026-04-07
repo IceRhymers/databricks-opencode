@@ -151,16 +151,16 @@ func ResolveWorkspaceID(host, token string) (string, error) {
 }
 
 // ConstructGatewayURL builds the AI Gateway URL for the OpenCode proxy endpoint.
-// Format: https://{workspaceId}.ai-gateway.cloud.databricks.com/openai/v1
-// Fallback: {host}/serving-endpoints/codex/openai/v1
-// Note: No opencode-specific route exists in Databricks AI Gateway — reuse codex endpoint.
+// Format: https://{workspaceId}.ai-gateway.cloud.databricks.com/anthropic
+// Fallback: {host}/serving-endpoints/anthropic
+// Uses /anthropic route with @ai-sdk/anthropic (Messages API).
 func ConstructGatewayURL(host, token string) string {
 	workspaceID, err := ResolveWorkspaceID(host, token)
 	if err != nil {
 		log.Printf("workspace ID resolution failed: %v", err)
-		return host + "/serving-endpoints/codex/openai/v1"
+		return host + "/serving-endpoints/anthropic"
 	}
-	gatewayURL := "https://" + workspaceID + ".ai-gateway.cloud.databricks.com/openai/v1"
+	gatewayURL := "https://" + workspaceID + ".ai-gateway.cloud.databricks.com/anthropic"
 	log.Printf("resolved workspace ID %s, using gateway URL: %s", workspaceID, gatewayURL)
 	return gatewayURL
 }
