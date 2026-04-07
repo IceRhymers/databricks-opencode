@@ -9,5 +9,4 @@ make build
 make test
 
 ## Reference implementations
-- databricks-codex: same architecture, TOML config
-- databricks-claude: shared pkg/ source (v0.5.0)
+- databricks-claude: shared pkg/ source (v0.5.0), same gateway URL pattern

@@ -78,7 +78,7 @@ func main() {
 	log.Printf("databricks-opencode: using profile: %s", profile)
 
 	// --- Resolve model ---
-	// Resolution chain: --model flag → saved state → "databricks-claude-sonnet-4-6" default.
+	// Resolution chain: --model flag → saved state → "anthropic/claude-sonnet-4-6" default.
 	// When --model is explicitly passed, save it for future sessions.
 	modelExplicit := model != ""
 	if model == "" {
@@ -88,7 +88,7 @@ func main() {
 		}
 	}
 	if model == "" {
-		model = "databricks-claude-sonnet-4-6"
+		model = "anthropic/claude-sonnet-4-6"
 	}
 	if modelExplicit {
 		saved := loadState()
@@ -173,13 +173,9 @@ func main() {
 
 	// --- Patch config.json to point OpenCode at the local proxy ---
 	cm := NewConfigManager()
-	if err := cm.Setup(proxyAddr, model, "databricks-proxy", modelExplicit); err != nil {
+	if err := cm.Setup(proxyAddr, model, "databricks-oauth-proxy", modelExplicit); err != nil {
 		log.Fatalf("databricks-opencode: failed to patch config.json: %v", err)
 	}
-
-	// Set OPENAI_API_KEY as a placeholder — the proxy overwrites the
-	// Authorization header with a live Databricks token per request.
-	os.Setenv("OPENAI_API_KEY", "databricks-proxy")
 
 	log.Printf("databricks-opencode: launching opencode")
 
@@ -327,7 +323,7 @@ Usage:
 Databricks-OpenCode Flags:
   --profile string      Databricks CLI profile (saved for future sessions; default: env or "DEFAULT")
   --upstream string     Override the AI Gateway URL (default: auto-discovered)
-  --model string        Model to use (default: "databricks-claude-sonnet-4-6")
+  --model string        Databricks model (claude-opus-4-6, claude-sonnet-4-6, etc.; default: "anthropic/claude-sonnet-4-6")
   --print-env           Print resolved configuration and exit (token redacted)
   --verbose, -v         Enable debug logging to stderr
   --log-file string     Write debug logs to a file (combinable with --verbose)

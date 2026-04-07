@@ -34,27 +34,27 @@ func readJSONFile(t *testing.T, path string) map[string]interface{} {
 func TestConfigManagerSetupCreatesConfig(t *testing.T) {
 	cm, _ := setupTestConfigManager(t)
 
-	if err := cm.Setup("http://127.0.0.1:9000", "gpt-5-4", "databricks-proxy", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:9000", "anthropic/claude-sonnet-4-6", "databricks-oauth-proxy", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
 	m := readJSONFile(t, cm.config.Path())
 
-	if m["model"] != "databricks-proxy/gpt-5-4" {
-		t.Errorf("model = %v, want %q", m["model"], "databricks-proxy/gpt-5-4")
+	if m["model"] != "anthropic/claude-sonnet-4-6" {
+		t.Errorf("model = %v, want %q", m["model"], "anthropic/claude-sonnet-4-6")
 	}
 
 	providers, _ := m["provider"].(map[string]interface{})
-	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
-	if dbProxy == nil {
-		t.Fatal("databricks-proxy provider not found")
+	anthropic, _ := providers["anthropic"].(map[string]interface{})
+	if anthropic == nil {
+		t.Fatal("anthropic provider not found")
 	}
-	options, _ := dbProxy["options"].(map[string]interface{})
+	options, _ := anthropic["options"].(map[string]interface{})
 	if options == nil {
-		t.Fatal("databricks-proxy options not found")
+		t.Fatal("anthropic options not found")
 	}
-	if options["baseURL"] != "http://127.0.0.1:9000/v1" {
-		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000/v1")
+	if options["baseURL"] != "http://127.0.0.1:9000" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:9000")
 	}
 }
 
@@ -67,7 +67,7 @@ func TestConfigManagerSetupPreservesExisting(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := cm.Setup("http://127.0.0.1:8080", "model-a", "key", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:8080", "anthropic/claude-sonnet-4-6", "key", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -82,8 +82,8 @@ func TestConfigManagerSetupPreservesExisting(t *testing.T) {
 	if providers["openai"] == nil {
 		t.Error("openai provider was not preserved")
 	}
-	if providers["databricks-proxy"] == nil {
-		t.Error("databricks-proxy not injected")
+	if providers["anthropic"] == nil {
+		t.Error("anthropic not injected")
 	}
 }
 
@@ -95,7 +95,7 @@ func TestConfigManagerRestore(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := cm.Setup("http://127.0.0.1:5000", "m", "k", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:5000", "anthropic/claude-sonnet-4-6", "k", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestConfigManagerCrashRecovery(t *testing.T) {
 	}
 
 	// Simulate first session: setup but no restore (crash).
-	if err := cm.Setup("http://127.0.0.1:5000", "m", "k", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:5000", "anthropic/claude-sonnet-4-6", "k", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 
@@ -152,13 +152,16 @@ func TestConfigManagerCrashRecovery(t *testing.T) {
 	}
 
 	// New session setup should recover: surgical restore first, then re-patch.
-	if err := cm.Setup("http://127.0.0.1:6000", "m2", "k2", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:6000", "anthropic/claude-opus-4-5", "k2", false); err != nil {
 		t.Fatalf("Setup after crash: %v", err)
 	}
 
 	m := readJSONFile(t, cm.config.Path())
-	if m["model"] != "databricks-proxy/m2" {
-		t.Errorf("model = %v, want %q", m["model"], "databricks-proxy/m2")
+	// Model was set during first session and preserved (not forced).
+	// After crash recovery the first session's model is restored (absent -> removed),
+	// then re-patched with the new session's model.
+	if m["model"] != "anthropic/claude-opus-4-5" {
+		t.Errorf("model = %v, want %q", m["model"], "anthropic/claude-opus-4-5")
 	}
 
 	// Original user config should still be there.
@@ -177,7 +180,7 @@ func TestConfigManagerPreservesUserModel(t *testing.T) {
 	}
 
 	// Setup without forceModel — should preserve user's model.
-	if err := cm.Setup("http://127.0.0.1:5000", "gpt-5-4", "k", false); err != nil {
+	if err := cm.Setup("http://127.0.0.1:5000", "anthropic/claude-sonnet-4-6", "k", false); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
 

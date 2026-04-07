@@ -15,12 +15,21 @@ import (
 // sentinel is used to distinguish "key was absent" from "key was empty string".
 var absent = struct{}{}
 
+// databricksModels are the model keys we inject into provider.anthropic.models.
+var databricksModels = []string{
+	"claude-opus-4-6",
+	"claude-opus-4-5",
+	"claude-sonnet-4-6",
+	"claude-sonnet-4-5",
+	"claude-haiku-4-5",
+}
+
 // Config reads, patches, and restores the OpenCode config.json file.
 type Config struct {
-	path         string
-	backupPath   string
-	sidecarPath  string
-	originals    map[string]interface{} // key -> original value, or absent sentinel
+	path        string
+	backupPath  string
+	sidecarPath string
+	originals   map[string]interface{} // key -> original value, or absent sentinel
 }
 
 // New creates a Config that manages ~/.config/opencode/opencode.json.
@@ -100,22 +109,41 @@ func (c *Config) SaveOriginals() error {
 		c.originals["model"] = absent
 	}
 
-	// Snapshot provider.databricks-proxy key.
+	// Snapshot provider.anthropic.options.baseURL and apiKey.
 	providers, _ := config["provider"].(map[string]interface{})
-	if providers != nil {
-		if v, ok := providers["databricks-proxy"]; ok {
-			c.originals["provider.databricks-proxy"] = v
-		} else {
-			c.originals["provider.databricks-proxy"] = absent
-		}
+	anthropic, _ := getMap(providers, "anthropic")
+	options, _ := getMap(anthropic, "options")
+
+	if v, ok := options["baseURL"]; ok {
+		c.originals["anthropic.options.baseURL"] = v
 	} else {
-		c.originals["provider.databricks-proxy"] = absent
+		c.originals["anthropic.options.baseURL"] = absent
+	}
+
+	if v, ok := options["apiKey"]; ok {
+		c.originals["anthropic.options.apiKey"] = v
+	} else {
+		c.originals["anthropic.options.apiKey"] = absent
+	}
+
+	// Snapshot which Databricks model keys existed before.
+	models, _ := getMap(anthropic, "models")
+	for _, m := range databricksModels {
+		key := "anthropic.models." + m
+		if _, ok := models[m]; ok {
+			c.originals[key] = true // existed
+		} else {
+			c.originals[key] = absent
+		}
 	}
 
 	return c.writeSidecar()
 }
 
-// Patch injects the databricks-proxy provider and optionally sets the model.
+// Patch injects the anthropic provider config and optionally sets the model.
+// proxyURL is the local proxy address (e.g. http://127.0.0.1:8080).
+// modelName is the full model identifier (e.g. anthropic/claude-sonnet-4-6).
+// apiKey is a placeholder key for the proxy.
 // If forceModel is true, the model is always written (explicit --model flag).
 // If forceModel is false, the model is only set if absent (preserve-if-present).
 func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) error {
@@ -130,30 +158,44 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 		providers = make(map[string]interface{})
 	}
 
-	// Inject the databricks-proxy provider (always overwrite — we own this key).
-	// Uses @ai-sdk/anthropic with authToken (sends Authorization: Bearer header
-	// which the local proxy expects, vs apiKey which sends x-api-key).
-	providers["databricks-proxy"] = map[string]interface{}{
-		"npm":  "@ai-sdk/anthropic",
-		"name": "Databricks AI Gateway",
-		"options": map[string]interface{}{
-			"baseURL":   proxyURL + "/v1",
-			"authToken": apiKey,
-		},
-		"models": map[string]interface{}{
-			modelName: map[string]interface{}{
-				"name": modelName,
-			},
-		},
+	// Ensure provider.anthropic exists (preserve user's existing keys).
+	anthropic, _ := providers["anthropic"].(map[string]interface{})
+	if anthropic == nil {
+		anthropic = make(map[string]interface{})
 	}
+
+	// Ensure options map exists (preserve user's existing options like timeout).
+	options, _ := anthropic["options"].(map[string]interface{})
+	if options == nil {
+		options = make(map[string]interface{})
+	}
+
+	// Inject our managed keys into options.
+	options["baseURL"] = proxyURL
+	options["apiKey"] = apiKey
+	anthropic["options"] = options
+
+	// Ensure models map exists (preserve user's existing models).
+	models, _ := anthropic["models"].(map[string]interface{})
+	if models == nil {
+		models = make(map[string]interface{})
+	}
+
+	// Add the 5 Databricks model keys.
+	for _, m := range databricksModels {
+		models[m] = map[string]interface{}{}
+	}
+	anthropic["models"] = models
+
+	providers["anthropic"] = anthropic
 	config["provider"] = providers
 
 	// Set the active model: preserve-if-present unless forced.
 	if forceModel {
-		config["model"] = "databricks-proxy/" + modelName
+		config["model"] = modelName
 	} else {
 		if _, exists := config["model"]; !exists {
-			config["model"] = "databricks-proxy/" + modelName
+			config["model"] = modelName
 		}
 	}
 
@@ -161,7 +203,7 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 }
 
 // Restore surgically removes only the keys we manage and restores originals.
-// Removes provider.databricks-proxy and restores model to its original value.
+// Removes injected anthropic options and model keys, restores model to its original value.
 func (c *Config) Restore() error {
 	// Load originals from sidecar if not in memory.
 	if len(c.originals) == 0 {
@@ -189,17 +231,61 @@ func (c *Config) Restore() error {
 		}
 	}
 
-	// Remove provider.databricks-proxy.
-	if providers, ok := config["provider"].(map[string]interface{}); ok {
-		if orig, exists := c.originals["provider.databricks-proxy"]; exists {
-			if orig == absent {
-				delete(providers, "databricks-proxy")
-			} else {
-				providers["databricks-proxy"] = orig
+	// Restore anthropic provider keys.
+	providers, _ := config["provider"].(map[string]interface{})
+	if providers != nil {
+		anthropic, _ := providers["anthropic"].(map[string]interface{})
+		if anthropic != nil {
+			options, _ := anthropic["options"].(map[string]interface{})
+			if options != nil {
+				// Restore baseURL.
+				if orig, ok := c.originals["anthropic.options.baseURL"]; ok {
+					if orig == absent {
+						delete(options, "baseURL")
+					} else {
+						options["baseURL"] = orig
+					}
+				}
+				// Restore apiKey.
+				if orig, ok := c.originals["anthropic.options.apiKey"]; ok {
+					if orig == absent {
+						delete(options, "apiKey")
+					} else {
+						options["apiKey"] = orig
+					}
+				}
+				if len(options) == 0 {
+					delete(anthropic, "options")
+				} else {
+					anthropic["options"] = options
+				}
 			}
-		} else {
-			delete(providers, "databricks-proxy")
+
+			// Remove only our injected model keys.
+			models, _ := anthropic["models"].(map[string]interface{})
+			if models != nil {
+				for _, m := range databricksModels {
+					key := "anthropic.models." + m
+					if orig, ok := c.originals[key]; ok && orig == absent {
+						delete(models, m)
+					}
+					// If it existed before, leave it alone.
+				}
+				if len(models) == 0 {
+					delete(anthropic, "models")
+				} else {
+					anthropic["models"] = models
+				}
+			}
+
+			// If anthropic provider is now empty, remove it.
+			if len(anthropic) == 0 {
+				delete(providers, "anthropic")
+			} else {
+				providers["anthropic"] = anthropic
+			}
 		}
+
 		// If providers map is now empty, remove it.
 		if len(providers) == 0 {
 			delete(config, "provider")
@@ -222,7 +308,7 @@ func (c *Config) Backup() error {
 	return c.WriteSentinel()
 }
 
-// UpdateProxyURL updates only the baseURL in the existing databricks-proxy provider.
+// UpdateProxyURL updates only the baseURL in the existing anthropic provider options.
 func (c *Config) UpdateProxyURL(proxyURL string) error {
 	config, err := c.readConfig()
 	if err != nil {
@@ -234,18 +320,18 @@ func (c *Config) UpdateProxyURL(proxyURL string) error {
 		return fmt.Errorf("no provider section in config")
 	}
 
-	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
-	if dbProxy == nil {
-		return fmt.Errorf("no databricks-proxy provider in config")
+	anthropic, _ := providers["anthropic"].(map[string]interface{})
+	if anthropic == nil {
+		return fmt.Errorf("no anthropic provider in config")
 	}
 
-	options, _ := dbProxy["options"].(map[string]interface{})
+	options, _ := anthropic["options"].(map[string]interface{})
 	if options == nil {
 		options = make(map[string]interface{})
 	}
 	options["baseURL"] = proxyURL
-	dbProxy["options"] = options
-	providers["databricks-proxy"] = dbProxy
+	anthropic["options"] = options
+	providers["anthropic"] = anthropic
 	config["provider"] = providers
 
 	return c.writeConfig(config)
@@ -260,10 +346,17 @@ func (c *Config) cleanup() {
 
 // sidecarData is the JSON schema for the sidecar file.
 type sidecarData struct {
-	Model              interface{} `json:"model"`
-	ModelAbsent        bool        `json:"model_absent"`
-	ProviderDBProxy    interface{} `json:"provider_databricks_proxy"`
-	ProviderDBPAbsent  bool        `json:"provider_databricks_proxy_absent"`
+	Model        interface{} `json:"model"`
+	ModelAbsent  bool        `json:"model_absent"`
+
+	BaseURL        interface{} `json:"anthropic_options_baseURL"`
+	BaseURLAbsent  bool        `json:"anthropic_options_baseURL_absent"`
+	APIKey         interface{} `json:"anthropic_options_apiKey"`
+	APIKeyAbsent   bool        `json:"anthropic_options_apiKey_absent"`
+
+	// Which Databricks model keys existed before patching.
+	// Maps model name -> true if existed, omitted if absent.
+	ExistingModels map[string]bool `json:"existing_models,omitempty"`
 }
 
 // writeSidecar persists originals to disk for crash recovery.
@@ -278,11 +371,27 @@ func (c *Config) writeSidecar() error {
 		}
 	}
 
-	if v, ok := c.originals["provider.databricks-proxy"]; ok {
+	if v, ok := c.originals["anthropic.options.baseURL"]; ok {
 		if v == absent {
-			sd.ProviderDBPAbsent = true
+			sd.BaseURLAbsent = true
 		} else {
-			sd.ProviderDBProxy = v
+			sd.BaseURL = v
+		}
+	}
+
+	if v, ok := c.originals["anthropic.options.apiKey"]; ok {
+		if v == absent {
+			sd.APIKeyAbsent = true
+		} else {
+			sd.APIKey = v
+		}
+	}
+
+	sd.ExistingModels = make(map[string]bool)
+	for _, m := range databricksModels {
+		key := "anthropic.models." + m
+		if v, ok := c.originals[key]; ok && v != absent {
+			sd.ExistingModels[m] = true
 		}
 	}
 
@@ -314,13 +423,37 @@ func (c *Config) loadSidecar() error {
 		c.originals["model"] = sd.Model
 	}
 
-	if sd.ProviderDBPAbsent {
-		c.originals["provider.databricks-proxy"] = absent
+	if sd.BaseURLAbsent {
+		c.originals["anthropic.options.baseURL"] = absent
 	} else {
-		c.originals["provider.databricks-proxy"] = sd.ProviderDBProxy
+		c.originals["anthropic.options.baseURL"] = sd.BaseURL
+	}
+
+	if sd.APIKeyAbsent {
+		c.originals["anthropic.options.apiKey"] = absent
+	} else {
+		c.originals["anthropic.options.apiKey"] = sd.APIKey
+	}
+
+	for _, m := range databricksModels {
+		key := "anthropic.models." + m
+		if sd.ExistingModels[m] {
+			c.originals[key] = true
+		} else {
+			c.originals[key] = absent
+		}
 	}
 
 	return nil
+}
+
+// getMap safely extracts a nested map from a parent map.
+func getMap(parent map[string]interface{}, key string) (map[string]interface{}, bool) {
+	if parent == nil {
+		return nil, false
+	}
+	v, ok := parent[key].(map[string]interface{})
+	return v, ok
 }
 
 // readConfig reads the config file and returns a parsed map.
