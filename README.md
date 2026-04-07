@@ -38,9 +38,10 @@ make build
 
 | Flag | Description |
 |------|-------------|
-| `--profile` | Databricks CLI profile (saved for future sessions; default: env or "DEFAULT") |
+| `--profile` | Databricks CLI profile (saved to state file; `--profile` flag writes it once; default: "DEFAULT") |
 | `--upstream` | Override the AI Gateway URL (default: auto-discovered) |
-| `--model` | Model to use (default: "databricks-gpt-5-4") |
+| `--model` | Model to use (saved for future sessions; default: "databricks-claude-sonnet-4-6") |
+| `--port` | Proxy listen port (saved for future sessions; default: 49155) |
 | `--print-env` | Print resolved configuration and exit (token redacted) |
 | `--verbose`, `-v` | Enable debug logging to stderr |
 | `--log-file` | Write debug logs to a file (combinable with --verbose) |
@@ -54,12 +55,11 @@ make build
 
 1. Authenticates with Databricks using the CLI profile
 2. Discovers the workspace host and constructs the AI Gateway URL
-3. Patches `~/.config/opencode/config.json` to point at a local proxy
-4. Starts a local HTTP proxy that injects a fresh OAuth token on every request
-5. Launches `opencode` as a child process
-6. Restores `config.json` on exit (crash-safe via backup file)
-
-Multiple concurrent sessions are supported via a session registry — each proxy hands off config ownership cleanly on exit.
+3. Binds a local proxy on `127.0.0.1:49155` (fixed port — first session owns it, others join)
+4. Writes `~/.config/opencode/config.json` once to point at the proxy (idempotent — no restore on exit)
+5. Starts refreshing Databricks OAuth tokens on every proxied request
+6. Launches `opencode` as a child process
+7. Tracks concurrent sessions with a ref-count; the last session out closes the listener
 
 No shell alias needed — `databricks-opencode` is a standalone binary.
 
