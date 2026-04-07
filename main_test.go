@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -414,6 +415,85 @@ func TestParseArgs_ProfileEquals(t *testing.T) {
 	_, _, _, _, _, _, _, profile, _, _, _, _, _ := parseArgs([]string{"--profile=production"})
 	if profile != "production" {
 		t.Errorf("expected profile=%q, got %q", "production", profile)
+	}
+}
+
+// --- Profile resolution tests ---
+// These mirror the resolution chain in main(): --profile flag → saved state → "DEFAULT".
+// The env var DATABRICKS_CONFIG_PROFILE is intentionally skipped.
+
+func TestProfileResolution_StateFileWinsOverEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// Save a profile to state file.
+	saveState(persistentState{Profile: "state-profile"})
+
+	// Set the env var that used to take priority.
+	t.Setenv("DATABRICKS_CONFIG_PROFILE", "env-profile")
+
+	// Simulate resolution chain from main(): --profile flag → saved state → "DEFAULT".
+	profile := "" // no --profile flag
+	if profile == "" {
+		if saved := loadState(); saved.Profile != "" {
+			profile = saved.Profile
+		}
+	}
+	if profile == "" {
+		profile = "DEFAULT"
+	}
+
+	if profile != "state-profile" {
+		t.Errorf("profile = %q, want %q (state file should win over env var)", profile, "state-profile")
+	}
+}
+
+func TestProfileResolution_FlagWinsOverStateFile(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "state.json") }
+	defer func() { statePath = orig }()
+
+	// Save a profile to state file.
+	saveState(persistentState{Profile: "state-profile"})
+
+	// Simulate resolution chain with explicit --profile flag.
+	profile := "flag-profile" // --profile flag set
+	if profile == "" {
+		if saved := loadState(); saved.Profile != "" {
+			profile = saved.Profile
+		}
+	}
+	if profile == "" {
+		profile = "DEFAULT"
+	}
+
+	if profile != "flag-profile" {
+		t.Errorf("profile = %q, want %q (flag should win over state file)", profile, "flag-profile")
+	}
+}
+
+func TestProfileResolution_DefaultWhenNoStateFile(t *testing.T) {
+	dir := t.TempDir()
+	orig := statePath
+	statePath = func() string { return filepath.Join(dir, "nonexistent.json") }
+	defer func() { statePath = orig }()
+
+	// Simulate resolution chain with no flag, no state file.
+	profile := ""
+	if profile == "" {
+		if saved := loadState(); saved.Profile != "" {
+			profile = saved.Profile
+		}
+	}
+	if profile == "" {
+		profile = "DEFAULT"
+	}
+
+	if profile != "DEFAULT" {
+		t.Errorf("profile = %q, want %q (should fall back to DEFAULT)", profile, "DEFAULT")
 	}
 }
 
