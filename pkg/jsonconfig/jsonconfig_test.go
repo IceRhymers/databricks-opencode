@@ -67,8 +67,10 @@ func TestPatchEmptyFile(t *testing.T) {
 	if models == nil {
 		t.Fatal("databricks-proxy models not found")
 	}
-	if models["gpt-5-4"] == nil {
-		t.Error("models[\"gpt-5-4\"] not found")
+	for _, m := range []string{"databricks-claude-opus-4-6", "databricks-claude-sonnet-4-6", "databricks-claude-haiku-4-5"} {
+		if models[m] == nil {
+			t.Errorf("models[%q] not found", m)
+		}
 	}
 }
 
