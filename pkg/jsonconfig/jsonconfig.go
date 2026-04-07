@@ -140,10 +140,18 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 			"baseURL":   proxyURL + "/v1",
 			"authToken": apiKey,
 		},
+		// Register all available Databricks Claude models so users can switch
+		// between them in OpenCode's model picker without manual config edits.
+		// The active model is controlled by the top-level "model" key below.
+		// Register all available Databricks Claude models so users can switch
+		// between them in OpenCode's model picker without manual config edits.
+		// The active model is controlled by the top-level "model" key below.
 		"models": map[string]interface{}{
-			modelName: map[string]interface{}{
-				"name": modelName,
-			},
+			"databricks-claude-opus-4-6":   map[string]interface{}{},
+			"databricks-claude-opus-4-5":   map[string]interface{}{},
+			"databricks-claude-sonnet-4-6": map[string]interface{}{},
+			"databricks-claude-sonnet-4-5": map[string]interface{}{},
+			"databricks-claude-haiku-4-5":  map[string]interface{}{},
 		},
 	}
 	config["provider"] = providers
