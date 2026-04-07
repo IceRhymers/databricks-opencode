@@ -406,7 +406,7 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, refcountPath st
 func handleHelp(upstreamBinary string) {
 	fmt.Printf(`databricks-opencode v%s — Databricks AI Gateway wrapper for OpenCode CLI
 
-Patches ~/.config/opencode/config.json and runs a local proxy so the OpenCode CLI
+Patches ~/.config/opencode/opencode.json and runs a local proxy so the OpenCode CLI
 authenticates through a Databricks AI Gateway endpoint with live token refresh.
 
 Usage:

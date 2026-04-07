@@ -1,6 +1,6 @@
 # databricks-opencode
 
-A Go binary that wraps the [OpenCode CLI](https://opencode.ai) with Databricks AI Gateway OAuth authentication. It patches `~/.config/opencode/config.json`, starts a local token-refreshing proxy, and launches OpenCode — so every request is authenticated through your Databricks workspace without any manual token management.
+A Go binary that wraps the [OpenCode CLI](https://opencode.ai) with Databricks AI Gateway OAuth authentication. It patches `~/.config/opencode/opencode.json`, starts a local token-refreshing proxy, and launches OpenCode — so every request is authenticated through your Databricks workspace without any manual token management.
 
 ## Prerequisites
 
@@ -56,7 +56,7 @@ make build
 1. Authenticates with Databricks using the CLI profile
 2. Discovers the workspace host and constructs the AI Gateway URL
 3. Binds a local proxy on `127.0.0.1:49155` (fixed port — first session owns it, others join)
-4. Writes `~/.config/opencode/config.json` once to point at the proxy (idempotent — no restore on exit)
+4. Writes `~/.config/opencode/opencode.json` once to point at the proxy (idempotent — no restore on exit)
 5. Starts refreshing Databricks OAuth tokens on every proxied request
 6. Launches `opencode` as a child process
 7. Tracks concurrent sessions with a ref-count; the last session out closes the listener
