@@ -10,6 +10,7 @@ A Go binary that wraps the [OpenCode CLI](https://opencode.ai) with Databricks A
 - [Go 1.22+](https://go.dev/dl/)
 - [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install.html) (`databricks` on PATH)
 - [OpenCode CLI](https://opencode.ai) (`opencode` on PATH)
+- A Databricks Model Serving endpoint with [AI Gateway](https://docs.databricks.com/aws/en/ai-gateway/) enabled (currently in public Beta)
 
 ## Installation
 
