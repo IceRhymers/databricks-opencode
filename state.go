@@ -8,7 +8,8 @@ import (
 )
 
 // defaultPort is the fixed port used by databricks-opencode when no override is given.
-const defaultPort = 49155
+// 49156 avoids conflict with macOS Launcher which binds 49155 by default.
+const defaultPort = 49156
 
 // persistentState is the JSON schema for ~/.config/opencode/.databricks-opencode.json.
 // This file survives config restore and persists across sessions.

@@ -117,7 +117,7 @@ func main() {
 	}
 
 	// --- Load state and resolve port ---
-	// Resolution chain: --port flag → saved state → defaultPort (49155).
+	// Resolution chain: --port flag → saved state → defaultPort (49156).
 	savedState := loadState()
 	port := resolvePort(portFlag, savedState)
 	portExplicit := portFlag > 0
@@ -422,7 +422,7 @@ Databricks-OpenCode Flags:
   --proxy-api-key string    Require this API key on all proxy requests (default: disabled)
   --tls-cert string         Path to TLS certificate file (requires --tls-key)
   --tls-key string          Path to TLS private key file (requires --tls-cert)
-  --port int                Local proxy port (default: 49155, saved for future sessions)
+  --port int                Local proxy port (default: 49156, saved for future sessions)
   --headless            Start proxy without launching opencode (for IDE extensions)
   --version             Print version and exit
   --help, -h            Show this help message
