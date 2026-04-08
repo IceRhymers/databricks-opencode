@@ -53,7 +53,7 @@ make build
 | `--profile` | Databricks CLI profile (saved to state file; `--profile` flag writes it once; default: "DEFAULT") |
 | `--upstream` | Override the AI Gateway URL (default: auto-discovered) |
 | `--model` | Model to use (saved for future sessions; default: "databricks-claude-sonnet-4-6") |
-| `--port` | Proxy listen port (saved for future sessions; default: 49155) |
+| `--port` | Proxy listen port (saved for future sessions; default: 49156) |
 | `--print-env` | Print resolved configuration and exit (token redacted) |
 | `--verbose`, `-v` | Enable debug logging to stderr |
 | `--log-file` | Write debug logs to a file (combinable with --verbose) |
@@ -67,7 +67,7 @@ make build
 
 1. Authenticates with Databricks using the CLI profile
 2. Discovers the workspace host and constructs the AI Gateway URL
-3. Binds a local proxy on `127.0.0.1:49155` (fixed port — first session owns it, others join)
+3. Binds a local proxy on `127.0.0.1:49156` (fixed port — first session owns it, others join)
 4. Writes `~/.config/opencode/opencode.json` once to point at the proxy (idempotent — no restore on exit)
 5. Starts refreshing Databricks OAuth tokens on every proxied request
 6. Launches `opencode` as a child process

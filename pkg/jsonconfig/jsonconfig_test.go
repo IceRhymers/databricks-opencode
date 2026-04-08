@@ -401,7 +401,7 @@ func TestUpdateProxyURL(t *testing.T) {
 
 func TestNeedsConfig_NoFile(t *testing.T) {
 	c := setupTestConfig(t)
-	if !c.NeedsConfig("http://127.0.0.1:49155") {
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
 		t.Error("NeedsConfig should return true when config file does not exist")
 	}
 }
@@ -410,12 +410,12 @@ func TestNeedsConfig_AlreadyConfigured(t *testing.T) {
 	c := setupTestConfig(t)
 
 	// Patch the config first.
-	if err := c.Patch("http://127.0.0.1:49155", "model-a", "key", false); err != nil {
+	if err := c.Patch("http://127.0.0.1:49156", "model-a", "key", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
 	// Same proxyURL — should return false (no-op).
-	if c.NeedsConfig("http://127.0.0.1:49155") {
+	if c.NeedsConfig("http://127.0.0.1:49156") {
 		t.Error("NeedsConfig should return false when baseURL already matches")
 	}
 }
@@ -424,7 +424,7 @@ func TestNeedsConfig_DifferentURL(t *testing.T) {
 	c := setupTestConfig(t)
 
 	// Patch with one URL.
-	if err := c.Patch("http://127.0.0.1:49155", "model-a", "key", false); err != nil {
+	if err := c.Patch("http://127.0.0.1:49156", "model-a", "key", false); err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
 
@@ -443,7 +443,7 @@ func TestNeedsConfig_MissingProvider(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if !c.NeedsConfig("http://127.0.0.1:49155") {
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
 		t.Error("NeedsConfig should return true when provider section is missing")
 	}
 }
