@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -12,9 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,7 +30,7 @@ import (
 var Version = "dev"
 
 func main() {
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, opencodeArgs := parseArgs(os.Args[1:])
+	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, opencodeArgs := parseArgs(os.Args[1:])
 
 	if showHelp {
 		handleHelp(upstream)
@@ -38,6 +39,30 @@ func main() {
 
 	if version {
 		fmt.Printf("databricks-opencode %s\n", Version)
+		os.Exit(0)
+	}
+
+	// --- Hook lifecycle commands (handled before auth/config setup) ---
+	if installHooksFlag || uninstallHooksFlag {
+		if installHooksFlag {
+			if err := installHooks(); err != nil {
+				log.Fatalf("databricks-opencode: --install-hooks: %v", err)
+			}
+			fmt.Fprintln(os.Stderr, "databricks-opencode: hooks installed — opencode plugin written to ~/.config/opencode/plugins/databricks-proxy/index.js")
+		} else {
+			if err := uninstallHooks(); err != nil {
+				log.Fatalf("databricks-opencode: --uninstall-hooks: %v", err)
+			}
+			fmt.Fprintln(os.Stderr, "databricks-opencode: hooks removed from opencode config")
+		}
+		os.Exit(0)
+	}
+
+	// --- Headless hook command (called by the opencode plugin, not by end users) ---
+	if headlessEnsureFlag {
+		state := loadState()
+		port := resolvePort(0, state)
+		headlessEnsure(port)
 		os.Exit(0)
 	}
 
@@ -211,10 +236,22 @@ func main() {
 	proxyAddr := fmt.Sprintf("%s://127.0.0.1:%d", proxyScheme, listenerPort(listener, port))
 	log.Printf("databricks-opencode: local proxy %s -> %s", proxyAddr, gatewayURL)
 
-	// --- Acquire refcount ---
-	refcountPath := filepath.Join(os.TempDir(), fmt.Sprintf(".databricks-opencode-sessions-%d", port))
-	if err := refcount.Acquire(refcountPath); err != nil {
-		log.Printf("databricks-opencode: refcount acquire warning: %v", err)
+	// --- Reference counting (wrapper mode only) ---
+	// In wrapper mode, the parent process acquires here and releases on exit.
+	// In headless mode, refcount is not used — OpenCode has no exit hook to
+	// release it, so the proxy relies on its idle timeout for shutdown.
+	refcountPath := refcountPathForPort(port)
+	if !headless {
+		if err := refcount.Acquire(refcountPath); err != nil {
+			log.Printf("databricks-opencode: refcount acquire warning: %v", err)
+		}
+	}
+
+	// In headless mode, wrap handler with /shutdown endpoint and idle timeout.
+	var doneCh chan struct{}
+	if headless {
+		doneCh = make(chan struct{})
+		proxyHandler = wrapWithLifecycle(proxyHandler, isOwner, idleTimeout, proxyAPIKey, doneCh)
 	}
 
 	// --- Ensure config.json points at the local proxy (idempotent) ---
@@ -233,13 +270,17 @@ func main() {
 		}
 	}
 
-	// --- Headless mode: print proxy URL and block until signal ---
+	// --- Headless mode: print proxy URL and block until signal or shutdown ---
 	if headless {
-		runHeadless(proxyAddr, listener, isOwner, refcountPath)
+		runHeadless(proxyAddr, listener, isOwner, doneCh)
 		return
 	}
 
 	log.Printf("databricks-opencode: launching opencode")
+
+	// Inject MANAGED env var so the child opencode session's hooks don't
+	// double-fire headlessEnsure.
+	os.Setenv("DATABRICKS_OPENCODE_MANAGED", "1")
 
 	// --- Run opencode as a child process (parent stays alive to serve the proxy) ---
 	exitCode, runErr := RunOpenCode(context.Background(), opencodeArgs)
@@ -261,21 +302,27 @@ func main() {
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, opencodeArgs []string) {
+func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, opencodeArgs []string) {
+	idleTimeout = 30 * time.Minute // default
+
 	knownFlags := map[string]bool{
-		"--verbose":       true,
-		"--version":       true,
-		"--help":          true,
-		"--print-env":     true,
-		"--model":         true,
-		"--upstream":      true,
-		"--log-file":      true,
-		"--profile":       true,
-		"--proxy-api-key": true,
-		"--tls-cert":      true,
-		"--tls-key":       true,
-		"--port":          true,
-		"--headless":      true,
+		"--verbose":          true,
+		"--version":          true,
+		"--help":             true,
+		"--print-env":        true,
+		"--model":            true,
+		"--upstream":         true,
+		"--log-file":         true,
+		"--profile":          true,
+		"--proxy-api-key":    true,
+		"--tls-cert":         true,
+		"--tls-key":          true,
+		"--port":             true,
+		"--headless":         true,
+		"--idle-timeout":     true,
+		"--install-hooks":    true,
+		"--uninstall-hooks":  true,
+		"--headless-ensure":  true,
 	}
 
 	i := 0
@@ -375,6 +422,25 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 					printEnv = true
 				case "--headless":
 					headless = true
+				case "--idle-timeout":
+					raw := value
+					if raw == "" && i+1 < len(args) {
+						i++
+						raw = args[i]
+					}
+					if raw != "" {
+						if d, err := time.ParseDuration(raw); err == nil {
+							idleTimeout = d
+						} else if mins, err := strconv.Atoi(raw); err == nil {
+							idleTimeout = time.Duration(mins) * time.Minute
+						}
+					}
+				case "--install-hooks":
+					installHooksFlag = true
+				case "--uninstall-hooks":
+					uninstallHooksFlag = true
+				case "--headless-ensure":
+					headlessEnsureFlag = true
 				}
 				i++
 				continue
@@ -388,16 +454,23 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 	return
 }
 
-// runHeadless starts the proxy without launching the opencode child process.
-// It prints the proxy URL to stdout and blocks until SIGINT or SIGTERM.
-func runHeadless(proxyURL string, ln net.Listener, isOwner bool, refcountPath string) {
+// runHeadless runs the proxy without launching an opencode child process.
+// It prints the proxy URL to stdout, then blocks until SIGINT/SIGTERM
+// or until doneCh is closed (by /shutdown or idle timeout).
+func runHeadless(proxyURL string, ln net.Listener, isOwner bool, doneCh chan struct{}) {
 	fmt.Printf("PROXY_URL=%s\n", proxyURL)
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	signal.Stop(sigCh)
-	n, _ := refcount.Release(refcountPath)
-	if n == 0 && isOwner {
+
+	select {
+	case <-sigCh:
+		signal.Stop(sigCh)
+	case <-doneCh:
+		// Triggered by /shutdown or idle timeout.
+	}
+
+	if isOwner {
 		ln.Close()
 	}
 }
@@ -424,6 +497,10 @@ Databricks-OpenCode Flags:
   --tls-key string          Path to TLS private key file (requires --tls-cert)
   --port int                Local proxy port (default: 49156, saved for future sessions)
   --headless            Start proxy without launching opencode (for IDE extensions)
+  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables, bare number = minutes)
+  --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
+  --uninstall-hooks     Remove databricks-opencode plugin from opencode config
+  --headless-ensure     Start proxy if not running (called by opencode plugin at init)
   --version             Print version and exit
   --help, -h            Show this help message
 
@@ -528,4 +605,66 @@ func handlePrintEnv(databricksHost, openaiBaseURL, token, profile, model string)
   Auth Token:         %s
   OpenCode binary:    %s
 `, profile, model, databricksHost, openaiBaseURL, redacted, opencodePath)
+}
+
+// wrapWithLifecycle wraps the proxy handler with:
+//   - POST /shutdown: immediately triggers proxy shutdown
+//   - Activity tracking: resets the idle timer on every proxied request
+//
+// It returns the wrapped handler. doneCh is closed when shutdown is triggered
+// (either via /shutdown or idle timeout). The caller selects on doneCh to
+// begin cleanup.
+func wrapWithLifecycle(
+	inner http.Handler,
+	isOwner bool,
+	idleTimeout time.Duration,
+	apiKey string,
+	doneCh chan struct{},
+) http.Handler {
+	var shutdownOnce sync.Once
+	triggerShutdown := func() {
+		shutdownOnce.Do(func() { close(doneCh) })
+	}
+
+	// Idle timer: fires once after idleTimeout of inactivity.
+	// Reset on every proxied request. time.AfterFunc is goroutine-safe.
+	var idleTimer *time.Timer
+	if idleTimeout > 0 {
+		idleTimer = time.AfterFunc(idleTimeout, func() {
+			log.Printf("databricks-opencode: idle timeout (%s), shutting down", idleTimeout)
+			triggerShutdown()
+		})
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Enforce API key if configured.
+		if apiKey != "" {
+			if r.Header.Get("Authorization") != "Bearer "+apiKey {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"exiting": true})
+		if idleTimer != nil {
+			idleTimer.Stop()
+		}
+		triggerShutdown()
+	})
+
+	// All other routes: reset idle timer, then delegate to inner handler.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if idleTimer != nil {
+			idleTimer.Reset(idleTimeout)
+		}
+		inner.ServeHTTP(w, r)
+	})
+
+	return mux
 }
