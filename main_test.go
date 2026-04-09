@@ -555,3 +555,36 @@ func TestHandleHelp_ContainsVersion(t *testing.T) {
 		t.Errorf("expected help output to contain version string, got:\n%s", out)
 	}
 }
+
+// --- Anti-drift tests: flagDefs ↔ knownFlags ---
+
+// TestCompletionFlagsCoverAllKnownFlags ensures every key in knownFlags has a
+// corresponding entry in flagDefs. If a flag is added to knownFlags without
+// updating flagDefs, completions will be silently missing.
+func TestCompletionFlagsCoverAllKnownFlags(t *testing.T) {
+	for flag := range knownFlags {
+		name := strings.TrimPrefix(flag, "--")
+		found := false
+		for _, def := range flagDefs {
+			if def.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("knownFlags contains %q but flagDefs has no matching entry — add it to completion_flags.go", flag)
+		}
+	}
+}
+
+// TestKnownFlagsCoverAllFlagDefs ensures every entry in flagDefs is reflected
+// in knownFlags. If a flag is added to flagDefs without updating knownFlags,
+// it will be forwarded to opencode instead of being handled by the wrapper.
+func TestKnownFlagsCoverAllFlagDefs(t *testing.T) {
+	for _, def := range flagDefs {
+		key := "--" + def.Name
+		if !knownFlags[key] {
+			t.Errorf("flagDefs contains %q but knownFlags is missing it — check the knownFlags initializer in completion_flags.go", key)
+		}
+	}
+}

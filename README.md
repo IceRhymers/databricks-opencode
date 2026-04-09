@@ -111,6 +111,37 @@ Removes only the databricks-opencode plugin file. Other plugins in your opencode
 - Safe to rerun `--install-hooks` after upgrades — the plugin file is overwritten, not duplicated.
 - Custom port settings persist automatically via the state file (`~/.config/opencode/.databricks-opencode.json`).
 
+## Shell Tab Completions
+
+`databricks-opencode` can generate shell completion scripts for bash, zsh, and fish. Completions are derived from the binary's own flag metadata and stay in sync automatically.
+
+### Install (one-time)
+
+**bash** — add to `~/.bashrc`:
+```bash
+eval "$(databricks-opencode completion bash)"
+```
+
+**zsh** — add to `~/.zshrc`:
+```zsh
+eval "$(databricks-opencode completion zsh)"
+```
+
+**fish** — add to `~/.config/fish/config.fish`:
+```fish
+databricks-opencode completion fish | source
+```
+
+### Homebrew
+
+If installed via `brew install IceRhymers/tap/databricks-opencode`, completions are installed automatically — no extra setup needed.
+
+### What completes
+
+- `--profile <TAB>` — lists profiles from `~/.databrickscfg` (updated live)
+- `--upstream`, `--log-file`, `--tls-cert`, `--tls-key <TAB>` — file path completion
+- All other flags — name completion when you type `-`
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
