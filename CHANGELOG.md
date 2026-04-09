@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.0...v0.4.1) (2026-04-09)
+
+
+### Bug Fixes
+
+* bump databricks-claude to v0.10.1 for completion --shell= support ([ec74927](https://github.com/IceRhymers/databricks-opencode/commit/ec74927d6b2b9b0e694cc4b58e1637065e3cb171))
+* bump databricks-claude to v0.10.1 to fix completion --shell= flag ([bbfb232](https://github.com/IceRhymers/databricks-opencode/commit/bbfb2320e0a57decc0d921767dbcafd038276ef3))
+
 ## [0.4.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.3.0...v0.4.0) (2026-04-09)
 
 
