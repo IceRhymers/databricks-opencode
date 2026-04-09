@@ -486,3 +486,98 @@ func TestInvalidJSONC(t *testing.T) {
 		t.Error("databricks-proxy not injected")
 	}
 }
+
+func TestAddPlugin_EmptyConfig(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.AddPlugin("/path/to/plugin"); err != nil {
+		t.Fatalf("AddPlugin: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	plugins, _ := m["plugin"].([]interface{})
+	if len(plugins) != 1 || plugins[0] != "/path/to/plugin" {
+		t.Errorf("plugin = %v, want [\"/path/to/plugin\"]", plugins)
+	}
+}
+
+func TestAddPlugin_Idempotent(t *testing.T) {
+	c := setupTestConfig(t)
+
+	c.AddPlugin("/path/to/plugin")
+	c.AddPlugin("/path/to/plugin")
+
+	m := readJSON(t, c.Path())
+	plugins, _ := m["plugin"].([]interface{})
+	if len(plugins) != 1 {
+		t.Errorf("expected 1 plugin entry after double add, got %d", len(plugins))
+	}
+}
+
+func TestAddPlugin_PreservesExisting(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Write config with an existing plugin.
+	initial := map[string]interface{}{
+		"plugin": []interface{}{"existing-plugin"},
+		"model":  "some-model",
+	}
+	data, _ := json.MarshalIndent(initial, "", "  ")
+	os.WriteFile(c.Path(), data, 0o600)
+
+	if err := c.AddPlugin("/path/to/new"); err != nil {
+		t.Fatalf("AddPlugin: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	plugins, _ := m["plugin"].([]interface{})
+	if len(plugins) != 2 {
+		t.Fatalf("expected 2 plugins, got %d: %v", len(plugins), plugins)
+	}
+	if plugins[0] != "existing-plugin" {
+		t.Errorf("plugins[0] = %v, want %q", plugins[0], "existing-plugin")
+	}
+	if m["model"] != "some-model" {
+		t.Error("model key was clobbered")
+	}
+}
+
+func TestRemovePlugin(t *testing.T) {
+	c := setupTestConfig(t)
+
+	c.AddPlugin("/path/to/plugin")
+	if err := c.RemovePlugin("/path/to/plugin"); err != nil {
+		t.Fatalf("RemovePlugin: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	if _, exists := m["plugin"]; exists {
+		t.Error("expected plugin key to be removed when array is empty")
+	}
+}
+
+func TestRemovePlugin_PreservesOthers(t *testing.T) {
+	c := setupTestConfig(t)
+
+	c.AddPlugin("keep-this")
+	c.AddPlugin("remove-this")
+
+	if err := c.RemovePlugin("remove-this"); err != nil {
+		t.Fatalf("RemovePlugin: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	plugins, _ := m["plugin"].([]interface{})
+	if len(plugins) != 1 || plugins[0] != "keep-this" {
+		t.Errorf("plugin = %v, want [\"keep-this\"]", plugins)
+	}
+}
+
+func TestRemovePlugin_NoFile(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Should not error on missing file.
+	if err := c.RemovePlugin("/nonexistent"); err != nil {
+		t.Fatalf("RemovePlugin on missing file should return nil, got: %v", err)
+	}
+}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,31 +9,27 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/IceRhymers/databricks-claude/pkg/refcount"
+	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
 // headlessEnsure checks whether the proxy is healthy on the given port.
 // If not, it starts a detached headless proxy and polls until ready (max 10s).
-// Called by the session.start hook via: databricks-opencode --headless-ensure
+// Called by the opencode plugin at init via: databricks-opencode --headless-ensure
+//
+// No refcount is acquired here — OpenCode has no exit hook to release it,
+// so the proxy relies on its idle timeout for shutdown instead.
 func headlessEnsure(port int) {
 	if os.Getenv("DATABRICKS_OPENCODE_MANAGED") == "1" {
 		log.Printf("databricks-opencode: --headless-ensure: skipped (managed session)")
 		return
 	}
 
-	// Acquire refcount FIRST so every ensure/release pair is symmetric.
-	refcountPath := refcountPathForPort(port)
-	if err := refcount.Acquire(refcountPath); err != nil {
-		log.Printf("databricks-opencode: --headless-ensure: refcount acquire warning: %v", err)
-	}
-
 	if isProxyHealthy(port) {
-		return // already running, refcount incremented
+		return // already running
 	}
 
 	self, err := os.Executable()
 	if err != nil {
-		refcount.Release(refcountPath) // undo acquire on failure
 		log.Fatalf("databricks-opencode: --headless-ensure: cannot find self: %v", err)
 	}
 
@@ -42,7 +37,6 @@ func headlessEnsure(port int) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		refcount.Release(refcountPath) // undo acquire on failure
 		log.Fatalf("databricks-opencode: --headless-ensure: failed to start proxy: %v", err)
 	}
 	if err := cmd.Process.Release(); err != nil {
@@ -56,26 +50,7 @@ func headlessEnsure(port int) {
 			return
 		}
 	}
-	refcount.Release(refcountPath) // undo acquire on failure
 	log.Fatalf("databricks-opencode: --headless-ensure: proxy did not become healthy within 10s")
-}
-
-// headlessRelease calls POST /shutdown on the proxy to decrement the refcount.
-// Called by the session.end hook via: databricks-opencode --headless-release
-// Errors are logged but not fatal — proxy may already be stopped.
-func headlessRelease(port int) {
-	if os.Getenv("DATABRICKS_OPENCODE_MANAGED") == "1" {
-		log.Printf("databricks-opencode: --headless-release: skipped (managed session)")
-		return
-	}
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Post(fmt.Sprintf("http://127.0.0.1:%d/shutdown", port), "application/json", nil)
-	if err != nil {
-		log.Printf("databricks-opencode: --headless-release: %v (proxy may already be stopped)", err)
-		return
-	}
-	resp.Body.Close()
 }
 
 // isProxyHealthy returns true if the proxy on port responds to GET /health.
@@ -94,26 +69,26 @@ func refcountPathForPort(port int) string {
 	return fmt.Sprintf("%s/.databricks-opencode-sessions-%d", os.TempDir(), port)
 }
 
-// pluginJS is the opencode plugin that hooks session.start and session.end
-// to manage the headless proxy lifecycle.
-const pluginJS = `const { spawnSync } = require("child_process");
-
-module.exports = {
-  name: "databricks-opencode-proxy",
-  hooks: {
-    "session.start": async () => {
-      spawnSync("databricks-opencode", ["--headless-ensure"], { stdio: "inherit" });
-    },
-    "session.end": async () => {
-      spawnSync("databricks-opencode", ["--headless-release"], { stdio: "inherit" });
-    }
-  }
+// pluginJSTemplate is the opencode plugin that ensures the headless proxy is running.
+// The plugin init body runs at session startup (ESM format required by OpenCode).
+// Shutdown is handled by the proxy's idle timeout — OpenCode has no exit hook.
+// %s is replaced with the absolute path to the binary at install time so the
+// plugin works regardless of Bun's PATH (which may not include ~/go/bin or /opt/homebrew/bin).
+const pluginJSTemplate = `export const DatabricksProxy = async ({ $ }) => {
+  await $` + "`" + `%s --headless-ensure` + "`" + `;
+  return {};
 };
 `
 
-// installHooks writes the JS plugin to ~/.config/opencode/plugins/databricks-proxy/index.js
-// and registers it in ~/.config/opencode/opencode.json under the "plugins" array.
+// installHooks writes the JS plugin and registers it in opencode.json.
+// The absolute path to the binary is baked in at install time; rerun --install-hooks after
+// reinstalling via a different method (e.g. switching from go install to Homebrew).
 func installHooks() error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot resolve own binary path: %w", err)
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine home dir: %w", err)
@@ -124,93 +99,34 @@ func installHooks() error {
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		return fmt.Errorf("creating plugin dir: %w", err)
 	}
+	pluginJS := fmt.Sprintf(pluginJSTemplate, self)
 	pluginPath := filepath.Join(pluginDir, "index.js")
 	if err := os.WriteFile(pluginPath, []byte(pluginJS), 0o644); err != nil {
 		return fmt.Errorf("writing plugin: %w", err)
 	}
 
 	// Register plugin in opencode.json.
-	configPath := filepath.Join(homeDir, ".config", "opencode", "opencode.json")
-	doc, err := readJSONFile(configPath)
-	if err != nil {
-		doc = map[string]interface{}{}
-	}
-
-	// Ensure "plugins" array contains the plugin path.
-	plugins, _ := doc["plugins"].([]interface{})
-	pluginEntry := pluginDir
-	found := false
-	for _, p := range plugins {
-		if s, ok := p.(string); ok && s == pluginEntry {
-			found = true
-			break
-		}
-	}
-	if !found {
-		plugins = append(plugins, pluginEntry)
-		doc["plugins"] = plugins
-	}
-
-	return writeJSONFile(configPath, doc)
+	cm := jsonconfig.New()
+	return cm.AddPlugin(pluginDir)
 }
 
-// uninstallHooks removes the JS plugin directory and its entry from opencode.json.
+// uninstallHooks removes the JS plugin file and its entry from opencode.json.
 func uninstallHooks() error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine home dir: %w", err)
 	}
 
-	// Remove plugin directory.
 	pluginDir := filepath.Join(homeDir, ".config", "opencode", "plugins", "databricks-proxy")
-	os.RemoveAll(pluginDir)
 
 	// Remove plugin entry from opencode.json.
-	configPath := filepath.Join(homeDir, ".config", "opencode", "opencode.json")
-	doc, err := readJSONFile(configPath)
-	if err != nil {
-		return nil // nothing to remove
+	cm := jsonconfig.New()
+	if err := cm.RemovePlugin(pluginDir); err != nil {
+		return fmt.Errorf("removing plugin from config: %w", err)
 	}
 
-	plugins, _ := doc["plugins"].([]interface{})
-	filtered := make([]interface{}, 0, len(plugins))
-	for _, p := range plugins {
-		if s, ok := p.(string); ok && s == pluginDir {
-			continue
-		}
-		filtered = append(filtered, p)
-	}
-	if len(filtered) == 0 {
-		delete(doc, "plugins")
-	} else {
-		doc["plugins"] = filtered
-	}
-
-	return writeJSONFile(configPath, doc)
-}
-
-// readJSONFile reads and parses a JSON file into a map.
-func readJSONFile(path string) (map[string]interface{}, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var doc map[string]interface{}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
-}
-
-// writeJSONFile writes a map as indented JSON to a file.
-func writeJSONFile(path string, doc map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	data, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshalling config: %w", err)
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	// Remove plugin file and directory (only if empty).
+	os.Remove(filepath.Join(pluginDir, "index.js"))
+	os.Remove(pluginDir)
+	return nil
 }

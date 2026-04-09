@@ -293,6 +293,56 @@ func (c *Config) UpdateProxyURL(proxyURL string) error {
 	return c.writeConfig(config)
 }
 
+// AddPlugin surgically adds pluginPath to the "plugin" array in opencode.json.
+// Idempotent — does not duplicate if already present.
+func (c *Config) AddPlugin(pluginPath string) error {
+	config, err := c.readConfig()
+	if err != nil {
+		return err
+	}
+
+	plugins, _ := config["plugin"].([]interface{})
+	for _, p := range plugins {
+		if s, ok := p.(string); ok && s == pluginPath {
+			return nil // already registered
+		}
+	}
+	plugins = append(plugins, pluginPath)
+	config["plugin"] = plugins
+
+	return c.writeConfig(config)
+}
+
+// RemovePlugin surgically removes pluginPath from the "plugin" array in opencode.json.
+// Removes the "plugin" key entirely if the array becomes empty.
+func (c *Config) RemovePlugin(pluginPath string) error {
+	config, err := c.readConfig()
+	if err != nil {
+		return nil // nothing to remove
+	}
+
+	plugins, _ := config["plugin"].([]interface{})
+	if plugins == nil {
+		return nil
+	}
+
+	filtered := make([]interface{}, 0, len(plugins))
+	for _, p := range plugins {
+		if s, ok := p.(string); ok && s == pluginPath {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+
+	if len(filtered) == 0 {
+		delete(config, "plugin")
+	} else {
+		config["plugin"] = filtered
+	}
+
+	return c.writeConfig(config)
+}
+
 // cleanup removes sidecar and backup sentinel files.
 func (c *Config) cleanup() {
 	os.Remove(c.sidecarPath)
