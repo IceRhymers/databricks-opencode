@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/IceRhymers/databricks-claude/pkg/authcheck"
+	"github.com/IceRhymers/databricks-claude/pkg/completion"
 	"github.com/IceRhymers/databricks-claude/pkg/portbind"
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
 	"github.com/IceRhymers/databricks-claude/pkg/refcount"
@@ -30,6 +31,13 @@ import (
 var Version = "dev"
 
 func main() {
+	// completion <shell> — must be the very first check, before any flag parsing,
+	// auth, or state loading. Safe to call in the Homebrew install sandbox.
+	if len(os.Args) >= 2 && os.Args[1] == "completion" {
+		completion.Run(os.Args[2:], flagDefs, "databricks-opencode")
+		os.Exit(0)
+	}
+
 	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, opencodeArgs := parseArgs(os.Args[1:])
 
 	if showHelp {
@@ -305,25 +313,8 @@ func main() {
 func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, opencodeArgs []string) {
 	idleTimeout = 30 * time.Minute // default
 
-	knownFlags := map[string]bool{
-		"--verbose":          true,
-		"--version":          true,
-		"--help":             true,
-		"--print-env":        true,
-		"--model":            true,
-		"--upstream":         true,
-		"--log-file":         true,
-		"--profile":          true,
-		"--proxy-api-key":    true,
-		"--tls-cert":         true,
-		"--tls-key":          true,
-		"--port":             true,
-		"--headless":         true,
-		"--idle-timeout":     true,
-		"--install-hooks":    true,
-		"--uninstall-hooks":  true,
-		"--headless-ensure":  true,
-	}
+	// knownFlags is defined at package level in completion_flags.go,
+	// derived from flagDefs so completions and parsing stay in sync.
 
 	i := 0
 	for i < len(args) {
