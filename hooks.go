@@ -2,12 +2,11 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
 
+	"github.com/IceRhymers/databricks-claude/pkg/headless"
+	"github.com/IceRhymers/databricks-claude/pkg/refcount"
 	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
@@ -18,54 +17,24 @@ import (
 // No refcount is acquired here — OpenCode has no exit hook to release it,
 // so the proxy relies on its idle timeout for shutdown instead.
 func headlessEnsure(port int) {
-	if os.Getenv("DATABRICKS_OPENCODE_MANAGED") == "1" {
-		log.Printf("databricks-opencode: --headless-ensure: skipped (managed session)")
-		return
-	}
-
-	// Determine scheme from saved TLS config.
-	state := loadState()
+	s := loadState()
 	scheme := "http"
-	if state.TLSCert != "" && state.TLSKey != "" {
+	if s.TLSCert != "" {
 		scheme = "https"
 	}
-
-	if proxyHealthy(port, scheme) {
-		return // already running
-	}
-
-	self, err := os.Executable()
-	if err != nil {
-		log.Fatalf("databricks-opencode: --headless-ensure: cannot find self: %v", err)
-	}
-
-	args := []string{"--headless", fmt.Sprintf("--port=%d", port)}
-	if state.TLSCert != "" && state.TLSKey != "" {
-		args = append(args, fmt.Sprintf("--tls-cert=%s", state.TLSCert), fmt.Sprintf("--tls-key=%s", state.TLSKey))
-	}
-	cmd := exec.Command(self, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("databricks-opencode: --headless-ensure: failed to start proxy: %v", err)
-	}
-	if err := cmd.Process.Release(); err != nil {
-		log.Printf("databricks-opencode: --headless-ensure: release warning: %v", err)
-	}
-
-	// Poll until healthy or timeout.
-	for i := 0; i < 20; i++ {
-		time.Sleep(500 * time.Millisecond)
-		if proxyHealthy(port, scheme) {
-			return
-		}
-	}
-	log.Fatalf("databricks-opencode: --headless-ensure: proxy did not become healthy within 10s")
+	headless.Ensure(headless.Config{
+		Port:          port,
+		Scheme:        scheme,
+		TLSCert:       s.TLSCert,
+		TLSKey:        s.TLSKey,
+		ManagedEnvVar: "DATABRICKS_OPENCODE_MANAGED",
+		LogPrefix:     "databricks-opencode",
+	})
 }
 
 // refcountPathForPort returns the file path used for cross-process session counting.
 func refcountPathForPort(port int) string {
-	return fmt.Sprintf("%s/.databricks-opencode-sessions-%d", os.TempDir(), port)
+	return refcount.PathForPort(".databricks-opencode-sessions", port)
 }
 
 // pluginJSTemplate is the opencode plugin that ensures the headless proxy is running.
