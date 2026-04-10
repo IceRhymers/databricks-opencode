@@ -17,6 +17,8 @@ type persistentState struct {
 	Profile string `json:"profile,omitempty"`
 	Model   string `json:"model,omitempty"`
 	Port    int    `json:"port,omitempty"`
+	TLSCert string `json:"tls_cert,omitempty"`
+	TLSKey  string `json:"tls_key,omitempty"`
 }
 
 // resolvePort returns the port to use: flag > saved state > defaultPort.
