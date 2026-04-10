@@ -88,13 +88,13 @@ func installHooks() error {
 		return fmt.Errorf("cannot resolve own binary path: %w", err)
 	}
 
-	homeDir, err := os.UserHomeDir()
+	configDir, err := opencodeConfigDir()
 	if err != nil {
-		return fmt.Errorf("cannot determine home dir: %w", err)
+		return fmt.Errorf("cannot determine opencode config dir: %w", err)
 	}
 
 	// Write plugin JS file.
-	pluginDir := filepath.Join(homeDir, ".config", "opencode", "plugins", "databricks-proxy")
+	pluginDir := filepath.Join(configDir, "plugins", "databricks-proxy")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		return fmt.Errorf("creating plugin dir: %w", err)
 	}
@@ -105,21 +105,21 @@ func installHooks() error {
 	}
 
 	// Register plugin in opencode.json.
-	cm := jsonconfig.New()
+	cm := jsonconfig.New(configDir)
 	return cm.AddPlugin(pluginDir)
 }
 
 // uninstallHooks removes the JS plugin file and its entry from opencode.json.
 func uninstallHooks() error {
-	homeDir, err := os.UserHomeDir()
+	configDir, err := opencodeConfigDir()
 	if err != nil {
-		return fmt.Errorf("cannot determine home dir: %w", err)
+		return fmt.Errorf("cannot determine opencode config dir: %w", err)
 	}
 
-	pluginDir := filepath.Join(homeDir, ".config", "opencode", "plugins", "databricks-proxy")
+	pluginDir := filepath.Join(configDir, "plugins", "databricks-proxy")
 
 	// Remove plugin entry from opencode.json.
-	cm := jsonconfig.New()
+	cm := jsonconfig.New(configDir)
 	if err := cm.RemovePlugin(pluginDir); err != nil {
 		return fmt.Errorf("removing plugin from config: %w", err)
 	}

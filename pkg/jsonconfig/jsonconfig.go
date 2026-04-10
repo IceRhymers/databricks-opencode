@@ -23,10 +23,9 @@ type Config struct {
 	originals    map[string]interface{} // key -> original value, or absent sentinel
 }
 
-// New creates a Config that manages ~/.config/opencode/opencode.json.
-func New() *Config {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".config", "opencode")
+// New creates a Config that manages opencode.json in the given config directory.
+// The caller should pass the OS-specific opencode config dir (e.g. from opencodeConfigDir()).
+func New(dir string) *Config {
 	return &Config{
 		path:        filepath.Join(dir, "opencode.json"),
 		backupPath:  filepath.Join(dir, "opencode.json.databricks-opencode-backup"),

@@ -85,7 +85,8 @@ func main() {
 			if err := installHooks(); err != nil {
 				log.Fatalf("databricks-opencode: --install-hooks: %v", err)
 			}
-			fmt.Fprintln(os.Stderr, "databricks-opencode: hooks installed — opencode plugin written to ~/.config/opencode/plugins/databricks-proxy/index.js")
+			hookDir, _ := opencodeConfigDir()
+			fmt.Fprintf(os.Stderr, "databricks-opencode: hooks installed — opencode plugin written to %s\n", filepath.Join(hookDir, "plugins", "databricks-proxy", "index.js"))
 		} else {
 			if err := uninstallHooks(); err != nil {
 				log.Fatalf("databricks-opencode: --uninstall-hooks: %v", err)
@@ -311,7 +312,11 @@ func main() {
 	if configAPIKey == "" {
 		configAPIKey = "databricks-proxy"
 	}
-	if err := EnsureConfig(jsonconfig.New(), proxyAddr, model, configAPIKey, modelExplicit); err != nil {
+	cfgDir, err := opencodeConfigDir()
+	if err != nil {
+		log.Fatalf("databricks-opencode: cannot determine opencode config dir: %v", err)
+	}
+	if err := EnsureConfig(jsonconfig.New(cfgDir), proxyAddr, model, configAPIKey, modelExplicit); err != nil {
 		if headless {
 			log.Printf("databricks-opencode: WARNING: failed to configure opencode: %v", err)
 		} else {
@@ -518,7 +523,7 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, doneCh chan str
 func handleHelp(upstreamBinary string) {
 	fmt.Printf(`databricks-opencode v%s — Databricks AI Gateway wrapper for OpenCode CLI
 
-Patches ~/.config/opencode/opencode.json and runs a local proxy so the OpenCode CLI
+Patches the opencode config (opencode.json) and runs a local proxy so the OpenCode CLI
 authenticates through a Databricks AI Gateway endpoint with live token refresh.
 
 Usage:
@@ -631,12 +636,12 @@ func listenerPort(ln net.Listener, fallback int) int {
 
 // buildUpdaterConfig returns the standard updater.Config for databricks-opencode.
 func buildUpdaterConfig() updater.Config {
-	home, _ := os.UserHomeDir()
+	cacheDir, _ := opencodeConfigDir()
 	return updater.Config{
 		RepoSlug:       "IceRhymers/databricks-opencode",
 		CurrentVersion: Version,
 		BinaryName:     "databricks-opencode",
-		CacheFile:      filepath.Join(home, ".config", "opencode", ".update-check.json"),
+		CacheFile:      filepath.Join(cacheDir, ".update-check.json"),
 		CacheTTL:       24 * time.Hour,
 	}
 }
