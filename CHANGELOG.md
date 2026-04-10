@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.1...v0.5.0) (2026-04-10)
+
+
+### Features
+
+* add update subcommand and startup update check ([f6cdffb](https://github.com/IceRhymers/databricks-opencode/commit/f6cdffbf7ad0f03d4f29bf7fc97a5371ac045983))
+* add update subcommand and startup update check ([b9131bc](https://github.com/IceRhymers/databricks-opencode/commit/b9131bceb848c73098985770c4fbe2ff297e3b46))
+* add update subcommand and startup update check ([d0e4f0e](https://github.com/IceRhymers/databricks-opencode/commit/d0e4f0e59c6cff5101c9d86cc1cddf191ac1edc1)), closes [#52](https://github.com/IceRhymers/databricks-opencode/issues/52)
+* bump databricks-claude to v0.12.0 for update subcommand and startup check ([12ea3f0](https://github.com/IceRhymers/databricks-opencode/commit/12ea3f0f7e9b063e81e3c1f4e693d0b679bba2ed))
+
+
+### Bug Fixes
+
+* make headlessEnsure TLS-aware to prevent health check failures with HTTPS ([68d07cd](https://github.com/IceRhymers/databricks-opencode/commit/68d07cdc6c6807bba8d14c5aee441177c530594b)), closes [#55](https://github.com/IceRhymers/databricks-opencode/issues/55)
+* use OS-specific opencode config dir on Windows and macOS ([31c71d4](https://github.com/IceRhymers/databricks-opencode/commit/31c71d47f7d27c5bc1e46277b7958b8bf0596605))
+* use OS-specific opencode config dir on Windows and macOS ([17a3d41](https://github.com/IceRhymers/databricks-opencode/commit/17a3d4194e8975e2bbc76844731d78128fd5b4d8))
+* use xdg-basedir convention (XDG_CONFIG_HOME or ~/.config) on all platforms ([1575e33](https://github.com/IceRhymers/databricks-opencode/commit/1575e332837d943e42c238d14b4875edc24b813b))
+
 ## [0.4.1](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.0...v0.4.1) (2026-04-09)
 
 
