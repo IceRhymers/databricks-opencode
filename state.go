@@ -1,10 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"log"
-	"os"
 	"path/filepath"
+
+	"github.com/IceRhymers/databricks-claude/pkg/state"
 )
 
 // defaultPort is the fixed port used by databricks-opencode when no override is given.
@@ -22,14 +21,8 @@ type persistentState struct {
 }
 
 // resolvePort returns the port to use: flag > saved state > defaultPort.
-func resolvePort(portFlag int, state persistentState) int {
-	if portFlag > 0 {
-		return portFlag
-	}
-	if state.Port > 0 {
-		return state.Port
-	}
-	return defaultPort
+func resolvePort(portFlag int, s persistentState) int {
+	return state.ResolvePort(portFlag, s.Port, defaultPort)
 }
 
 // statePath returns the path to the persistent state file.
@@ -45,50 +38,11 @@ var statePath = func() string {
 // loadState reads the persistent state file. Returns zero-value state if
 // the file doesn't exist or can't be parsed.
 func loadState() persistentState {
-	data, err := os.ReadFile(statePath())
-	if err != nil {
-		return persistentState{}
-	}
-	var s persistentState
-	if err := json.Unmarshal(data, &s); err != nil {
-		log.Printf("databricks-opencode: invalid state file, ignoring: %v", err)
-		return persistentState{}
-	}
+	s, _ := state.Load[persistentState](statePath())
 	return s
 }
 
 // saveState writes the persistent state file atomically.
 func saveState(s persistentState) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-
-	p := statePath()
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, ".state-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return err
-	}
-	return os.Rename(tmpPath, p)
+	return state.Save(statePath(), s)
 }
