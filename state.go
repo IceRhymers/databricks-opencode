@@ -11,7 +11,7 @@ import (
 // 49156 avoids conflict with macOS Launcher which binds 49155 by default.
 const defaultPort = 49156
 
-// persistentState is the JSON schema for ~/.config/opencode/.databricks-opencode.json.
+// persistentState is the JSON schema for <opencode-config-dir>/.databricks-opencode.json.
 // This file survives config restore and persists across sessions.
 type persistentState struct {
 	Profile string `json:"profile,omitempty"`
@@ -35,11 +35,11 @@ func resolvePort(portFlag int, state persistentState) int {
 // statePath returns the path to the persistent state file.
 // It is a variable so tests can override it.
 var statePath = func() string {
-	home, err := os.UserHomeDir()
+	dir, err := opencodeConfigDir()
 	if err != nil {
-		return ".config/opencode/.databricks-opencode.json"
+		return ".databricks-opencode.json"
 	}
-	return filepath.Join(home, ".config", "opencode", ".databricks-opencode.json")
+	return filepath.Join(dir, ".databricks-opencode.json")
 }
 
 // loadState reads the persistent state file. Returns zero-value state if
