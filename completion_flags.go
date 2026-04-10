@@ -29,6 +29,7 @@ var flagDefs = []completion.FlagDef{
 	{Name: "install-hooks", Description: "Install opencode plugin for automatic proxy lifecycle"},
 	{Name: "uninstall-hooks", Description: "Remove databricks-opencode plugin from opencode"},
 	{Name: "headless-ensure", Description: "Ensure headless proxy is running (called by opencode plugin)"},
+	{Name: "no-update-check", Description: "Skip the automatic update check on startup"},
 }
 
 // knownFlags is the set of flag names (with "--" prefix) that databricks-opencode
