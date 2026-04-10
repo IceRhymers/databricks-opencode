@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/IceRhymers/databricks-claude/pkg/portbind"
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
 	"github.com/IceRhymers/databricks-claude/pkg/refcount"
+	"github.com/IceRhymers/databricks-claude/pkg/updater"
 	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
@@ -38,7 +40,34 @@ func main() {
 		os.Exit(0)
 	}
 
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, opencodeArgs := parseArgs(os.Args[1:])
+	// update — force-check for a newer release and print instructions.
+	if len(os.Args) >= 2 && os.Args[1] == "update" {
+		if os.Getenv("DATABRICKS_NO_UPDATE_CHECK") == "1" {
+			fmt.Fprintln(os.Stderr, "databricks-opencode: update check disabled via DATABRICKS_NO_UPDATE_CHECK")
+			os.Exit(0)
+		}
+		cfg := buildUpdaterConfig()
+		cfg.CacheTTL = 0 // force fresh check
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		r, err := updater.Check(ctx, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "databricks-opencode: update check failed: %v\n", err)
+			os.Exit(1)
+		}
+		if !r.UpdateAvailable {
+			fmt.Fprintf(os.Stderr, "databricks-opencode v%s is already the latest version\n", Version)
+			os.Exit(0)
+		}
+		if r.IsHomebrew {
+			fmt.Fprintf(os.Stderr, "Update available: v%s. Run: brew upgrade databricks-opencode\n", r.LatestVersion)
+		} else {
+			fmt.Fprintf(os.Stderr, "Update available: v%s. Download from: %s\n", r.LatestVersion, r.ReleaseURL)
+		}
+		os.Exit(0)
+	}
+
+	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, noUpdateCheck, opencodeArgs := parseArgs(os.Args[1:])
 
 	if showHelp {
 		handleHelp(upstream)
@@ -284,6 +313,11 @@ func main() {
 		return
 	}
 
+	// --- Synchronous update check (before child to avoid stderr interleaving) ---
+	if !noUpdateCheck && os.Getenv("DATABRICKS_NO_UPDATE_CHECK") != "1" {
+		printUpdateNotice(buildUpdaterConfig())
+	}
+
 	log.Printf("databricks-opencode: launching opencode")
 
 	// Inject MANAGED env var so the child opencode session's hooks don't
@@ -310,7 +344,7 @@ func main() {
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, opencodeArgs []string) {
+func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, noUpdateCheck bool, opencodeArgs []string) {
 	idleTimeout = 30 * time.Minute // default
 
 	// knownFlags is defined at package level in completion_flags.go,
@@ -432,6 +466,8 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 					uninstallHooksFlag = true
 				case "--headless-ensure":
 					headlessEnsureFlag = true
+				case "--no-update-check":
+					noUpdateCheck = true
 				}
 				i++
 				continue
@@ -492,8 +528,13 @@ Databricks-OpenCode Flags:
   --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
   --uninstall-hooks     Remove databricks-opencode plugin from opencode config
   --headless-ensure     Start proxy if not running (called by opencode plugin at init)
+  --no-update-check            Skip the automatic update check on startup
   --version             Print version and exit
   --help, -h            Show this help message
+
+Subcommands:
+  completion <shell>           Generate shell completions (bash, zsh, fish)
+  update                       Check for a newer release and print upgrade instructions
 
 ────────────────────────────────────────────────────────────────────────────────
 OpenCode CLI Options:
@@ -574,6 +615,38 @@ func listenerPort(ln net.Listener, fallback int) int {
 		return addr.Port
 	}
 	return fallback
+}
+
+// buildUpdaterConfig returns the standard updater.Config for databricks-opencode.
+func buildUpdaterConfig() updater.Config {
+	home, _ := os.UserHomeDir()
+	return updater.Config{
+		RepoSlug:       "IceRhymers/databricks-opencode",
+		CurrentVersion: Version,
+		BinaryName:     "databricks-opencode",
+		CacheFile:      filepath.Join(home, ".config", "opencode", ".update-check.json"),
+		CacheTTL:       24 * time.Hour,
+	}
+}
+
+// printUpdateNotice checks for a newer release and prints a one-line notice
+// to stderr. The 2-second timeout ensures cold misses don't delay startup.
+func printUpdateNotice(cfg updater.Config) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	r, err := updater.Check(ctx, cfg)
+	if err != nil {
+		log.Printf("databricks-opencode: update check: %v", err)
+		return
+	}
+	if !r.UpdateAvailable {
+		return
+	}
+	if r.IsHomebrew {
+		fmt.Fprintf(os.Stderr, "databricks-opencode: update available (v%s). Run: brew upgrade databricks-opencode\n", r.LatestVersion)
+	} else {
+		fmt.Fprintf(os.Stderr, "databricks-opencode: update available (v%s). Run: databricks-opencode update\n", r.LatestVersion)
+	}
 }
 
 // handlePrintEnv prints resolved configuration with the token redacted.
