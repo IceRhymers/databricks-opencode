@@ -198,6 +198,18 @@ func main() {
 		log.Fatalf("databricks-opencode: %v", err)
 	}
 
+	// --- Save TLS config to state so headless-ensure can use the right scheme ---
+	{
+		s := loadState()
+		if s.TLSCert != tlsCert || s.TLSKey != tlsKey {
+			s.TLSCert = tlsCert
+			s.TLSKey = tlsKey
+			if err := saveState(s); err != nil {
+				log.Printf("databricks-opencode: failed to save TLS config: %v", err)
+			}
+		}
+	}
+
 	// --- Startup security checks ---
 	for _, w := range proxy.SecurityChecks() {
 		fmt.Fprintln(os.Stderr, w)
