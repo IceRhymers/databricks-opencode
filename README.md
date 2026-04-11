@@ -21,6 +21,17 @@ brew tap IceRhymers/tap
 brew install databricks-opencode
 ```
 
+### Via Scoop (Windows)
+
+```powershell
+scoop bucket add icerhymers https://github.com/IceRhymers/scoop-bucket
+scoop install databricks-opencode
+```
+
+### Direct binary (Windows)
+
+Download the latest release from the [releases page](https://github.com/IceRhymers/databricks-opencode/releases), pick `databricks-opencode-windows-amd64.exe` (or `arm64`), rename it to `databricks-opencode.exe`, and place it somewhere on your `PATH`.
+
 ### From source
 
 ```bash
