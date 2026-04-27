@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+* add `databricks-claude-opus-4-7` to registered model list and promote it to primary default model, replacing `databricks-claude-sonnet-4-6` ([#64](https://github.com/IceRhymers/databricks-opencode/issues/64))
+
 ## [0.5.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.1...v0.5.0) (2026-04-10)
 
 
