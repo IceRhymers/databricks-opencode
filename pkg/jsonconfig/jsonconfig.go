@@ -146,6 +146,7 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 		// between them in OpenCode's model picker without manual config edits.
 		// The active model is controlled by the top-level "model" key below.
 		"models": map[string]interface{}{
+			"databricks-claude-opus-4-7":   map[string]interface{}{},
 			"databricks-claude-opus-4-6":   map[string]interface{}{},
 			"databricks-claude-opus-4-5":   map[string]interface{}{},
 			"databricks-claude-sonnet-4-6": map[string]interface{}{},

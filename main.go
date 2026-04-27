@@ -160,7 +160,7 @@ func main() {
 		}
 	}
 	if model == "" {
-		model = "databricks-claude-sonnet-4-6"
+		model = "databricks-claude-opus-4-7"
 	}
 	if modelExplicit {
 		saved := loadState()
@@ -538,7 +538,7 @@ Usage:
 Databricks-OpenCode Flags:
   --profile string      Databricks CLI profile (saved for future sessions; default: env or "DEFAULT")
   --upstream string     Override the AI Gateway URL (default: auto-discovered)
-  --model string        Model to use (default: "databricks-claude-sonnet-4-6")
+  --model string        Model to use (default: "databricks-claude-opus-4-7")
   --print-env           Print resolved configuration and exit (token redacted)
   --verbose, -v         Enable debug logging to stderr
   --log-file string     Write debug logs to a file (combinable with --verbose)

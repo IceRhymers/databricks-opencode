@@ -64,7 +64,7 @@ make build
 |------|-------------|
 | `--profile` | Databricks CLI profile (saved to state file; `--profile` flag writes it once; default: "DEFAULT") |
 | `--upstream` | Override the AI Gateway URL (default: auto-discovered) |
-| `--model` | Model to use (saved for future sessions; default: "databricks-claude-sonnet-4-6") |
+| `--model` | Model to use (saved for future sessions; default: "databricks-claude-opus-4-7") |
 | `--port` | Proxy listen port (saved for future sessions; default: 49156) |
 | `--print-env` | Print resolved configuration and exit (token redacted) |
 | `--verbose`, `-v` | Enable debug logging to stderr |
