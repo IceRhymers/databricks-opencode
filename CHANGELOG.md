@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.5.0...v0.6.0) (2026-05-04)
+
+
+### Features
+
+* add databricks-claude-opus-4-7 and make it the primary default ([6d4bc86](https://github.com/IceRhymers/databricks-opencode/commit/6d4bc864d88e6df93a6aa18e7b553b7bb086daff)), closes [#64](https://github.com/IceRhymers/databricks-opencode/issues/64)
+* simplify `ConstructGatewayURL`: use host-relative AI Gateway path (`{host}/ai-gateway/anthropic`), removing SCIM workspace-ID lookup, token parameter, and fallback ([#69](https://github.com/IceRhymers/databricks-opencode/issues/69)) ([3d1d55a](https://github.com/IceRhymers/databricks-opencode/commit/3d1d55afbb6949d07ad52a33f196c4126cb740d7))
+* require conventional commit prefix in agent instructions ([2870b28](https://github.com/IceRhymers/databricks-opencode/commit/2870b28d6c014cfe329866414c3e1fd498e945ea))
+
 ## [0.5.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.1...v0.5.0) (2026-04-10)
 
 
