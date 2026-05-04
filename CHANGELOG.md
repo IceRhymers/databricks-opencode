@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.5.0...v0.6.0) (2026-05-04)
+
+
+### Features
+
+* add databricks-claude-opus-4-7 and make it the primary default ([6d4bc86](https://github.com/IceRhymers/databricks-opencode/commit/6d4bc864d88e6df93a6aa18e7b553b7bb086daff)), closes [#64](https://github.com/IceRhymers/databricks-opencode/issues/64)
+* document release-please conventional commit requirements in AGENTS.md ([d22c1e8](https://github.com/IceRhymers/databricks-opencode/commit/d22c1e86309e601fb5268bd8c9cb0ea9360c2788))
+* require conventional commit prefix in agent instructions ([c7e4694](https://github.com/IceRhymers/databricks-opencode/commit/c7e4694c59aeb34cc4827b3352706a6fd5b20de7))
+* require conventional commit prefix in agent instructions ([2870b28](https://github.com/IceRhymers/databricks-opencode/commit/2870b28d6c014cfe329866414c3e1fd498e945ea))
+
 ## [0.5.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.4.1...v0.5.0) (2026-04-10)
 
 
