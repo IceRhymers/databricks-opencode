@@ -230,7 +230,7 @@ func main() {
 
 	gatewayURL := upstream
 	if gatewayURL == "" {
-		gatewayURL = ConstructGatewayURL(host, initialToken)
+		gatewayURL = ConstructGatewayURL(host)
 	}
 	log.Printf("databricks-opencode: gateway URL: %s", gatewayURL)
 
