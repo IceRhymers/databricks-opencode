@@ -14,7 +14,7 @@ A lightweight Go proxy wrapper for OpenCode CLI that routes inference requests t
 |------|---------|
 | `main.go` | Entry point: parses flags, resolves profile/model, discovers gateway URL, starts proxy, patches config, runs opencode |
 | `config.go` | ConfigManager: coordinates config.json patching, file locking, session registry, crash recovery |
-| `token.go` | Token management: databricksFetcher implements tokencache.TokenFetcher via Databricks CLI; host discovery and workspace ID resolution via SCIM |
+| `token.go` | Token management: databricksFetcher implements tokencache.TokenFetcher via Databricks CLI; host discovery |
 | `proxy.go` | ProxyConfig and proxy wrappers; wraps databricks-claude/pkg/proxy |
 | `process.go` | RunOpenCode: executes opencode as a child process with args |
 | `state.go` | loadState/saveState: persists profile and model selection to ~/.config/opencode/.state.json |
@@ -70,8 +70,7 @@ make clean
 
 3. **Host and Gateway URL Discovery**
    - Host discovered via `databricks auth env --profile <profile> --output json` → `DATABRICKS_HOST`
-   - Workspace ID resolved via SCIM `/api/2.0/preview/scim/v2/Me` endpoint, extracted from `x-databricks-org-id` header
-   - Gateway URL: `https://{workspaceId}.ai-gateway.cloud.databricks.com/anthropic` (fallback: `{host}/serving-endpoints/anthropic`)
+   - Gateway URL: `{host}/ai-gateway/anthropic`
 
 4. **Config Patching and Restoration (JSONC-Aware)**
    - Snapshots original values of managed keys before patching (stored in `.databricks-opencode-originals.json` sidecar)
