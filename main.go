@@ -65,11 +65,31 @@ func main() {
 		os.Exit(0)
 	}
 
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, noUpdateCheck, opencodeArgs, parseErr := parseArgs(os.Args[1:])
-	if parseErr != nil {
-		fmt.Fprintln(os.Stderr, "databricks-opencode:", parseErr)
+	a, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "databricks-opencode:", err)
 		os.Exit(1)
 	}
+
+	verbose := a.Verbose
+	version := a.Version
+	showHelp := a.ShowHelp
+	printEnv := a.PrintEnv
+	model := a.Model
+	upstream := a.Upstream
+	logFile := a.LogFile
+	profile := a.Profile
+	proxyAPIKey := a.ProxyAPIKey
+	tlsCert := a.TLSCert
+	tlsKey := a.TLSKey
+	portFlag := a.Port
+	headless := a.Headless
+	idleTimeout := a.IdleTimeout
+	installHooksFlag := a.InstallHooksFlag
+	uninstallHooksFlag := a.UninstallHooksFlag
+	headlessEnsureFlag := a.HeadlessEnsureFlag
+	noUpdateCheck := a.NoUpdateCheck
+	opencodeArgs := a.OpencodeArgs
 
 	if showHelp {
 		handleHelp(upstream)
@@ -389,9 +409,34 @@ func main() {
 	os.Exit(exitCode)
 }
 
+// Args holds all parsed databricks-opencode flags plus the residual opencode args.
+type Args struct {
+	Verbose            bool
+	Version            bool
+	ShowHelp           bool
+	PrintEnv           bool
+	Model              string
+	Upstream           string
+	LogFile            string
+	Profile            string
+	ProxyAPIKey        string
+	TLSCert            string
+	TLSKey             string
+	Port               int
+	Headless           bool
+	IdleTimeout        time.Duration
+	InstallHooksFlag   bool
+	UninstallHooksFlag bool
+	HeadlessEnsureFlag bool
+	NoUpdateCheck      bool
+	OpencodeArgs       []string
+}
+
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, noUpdateCheck bool, opencodeArgs []string, err error) {
-	idleTimeout = 30 * time.Minute // default
+func parseArgs(args []string) (*Args, error) {
+	a := &Args{
+		IdleTimeout: 30 * time.Minute, // default
+	}
 
 	// knownFlags is defined at package level in completion_flags.go,
 	// derived from flagDefs so completions and parsing stay in sync.
@@ -402,17 +447,17 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 
 		// Explicit separator: everything after "--" goes to opencode.
 		if arg == "--" {
-			opencodeArgs = append(opencodeArgs, args[i+1:]...)
-			return
+			a.OpencodeArgs = append(a.OpencodeArgs, args[i+1:]...)
+			return a, nil
 		}
 
 		if arg == "-h" {
-			showHelp = true
+			a.ShowHelp = true
 			i++
 			continue
 		}
 		if arg == "-v" {
-			verbose = true
+			a.Verbose = true
 			i++
 			continue
 		}
@@ -429,70 +474,70 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 				switch name {
 				case "--model":
 					if value != "" {
-						model = value
+						a.Model = value
 					} else if i+1 < len(args) {
 						i++
-						model = args[i]
+						a.Model = args[i]
 					}
 				case "--upstream":
 					if value != "" {
-						upstream = value
+						a.Upstream = value
 					} else if i+1 < len(args) {
 						i++
-						upstream = args[i]
+						a.Upstream = args[i]
 					}
 				case "--log-file":
 					if value != "" {
-						logFile = value
+						a.LogFile = value
 					} else if i+1 < len(args) {
 						i++
-						logFile = args[i]
+						a.LogFile = args[i]
 					}
 				case "--profile":
 					if value != "" {
-						profile = value
+						a.Profile = value
 					} else if i+1 < len(args) {
 						i++
-						profile = args[i]
+						a.Profile = args[i]
 					}
 				case "--proxy-api-key":
 					if value != "" {
-						proxyAPIKey = value
+						a.ProxyAPIKey = value
 					} else if i+1 < len(args) {
 						i++
-						proxyAPIKey = args[i]
+						a.ProxyAPIKey = args[i]
 					}
 				case "--tls-cert":
 					if value != "" {
-						tlsCert = value
+						a.TLSCert = value
 					} else if i+1 < len(args) {
 						i++
-						tlsCert = args[i]
+						a.TLSCert = args[i]
 					}
 				case "--tls-key":
 					if value != "" {
-						tlsKey = value
+						a.TLSKey = value
 					} else if i+1 < len(args) {
 						i++
-						tlsKey = args[i]
+						a.TLSKey = args[i]
 					}
 				case "--port":
 					if value != "" {
-						port, _ = strconv.Atoi(value)
+						a.Port, _ = strconv.Atoi(value)
 					} else if i+1 < len(args) {
 						i++
-						port, _ = strconv.Atoi(args[i])
+						a.Port, _ = strconv.Atoi(args[i])
 					}
 				case "--verbose":
-					verbose = true
+					a.Verbose = true
 				case "--version":
-					version = true
+					a.Version = true
 				case "--help":
-					showHelp = true
+					a.ShowHelp = true
 				case "--print-env":
-					printEnv = true
+					a.PrintEnv = true
 				case "--headless":
-					headless = true
+					a.Headless = true
 				case "--idle-timeout":
 					raw := value
 					if raw == "" && i+1 < len(args) {
@@ -502,18 +547,18 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 					if raw != "" {
 						d, perr := time.ParseDuration(raw)
 						if perr != nil {
-							return false, false, false, false, "", "", "", "", "", "", "", 0, false, 0, false, false, false, false, nil, fmt.Errorf("--idle-timeout: %q is not a valid duration (use e.g. 30s, 5m, 1h)", raw)
+							return nil, fmt.Errorf("--idle-timeout: %q is not a valid duration (use e.g. 30s, 5m, 1h)", raw)
 						}
-						idleTimeout = d
+						a.IdleTimeout = d
 					}
 				case "--install-hooks":
-					installHooksFlag = true
+					a.InstallHooksFlag = true
 				case "--uninstall-hooks":
-					uninstallHooksFlag = true
+					a.UninstallHooksFlag = true
 				case "--headless-ensure":
-					headlessEnsureFlag = true
+					a.HeadlessEnsureFlag = true
 				case "--no-update-check":
-					noUpdateCheck = true
+					a.NoUpdateCheck = true
 				}
 				i++
 				continue
@@ -521,10 +566,10 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 		}
 
 		// Not a known flag — pass through to opencode.
-		opencodeArgs = append(opencodeArgs, arg)
+		a.OpencodeArgs = append(a.OpencodeArgs, arg)
 		i++
 	}
-	return
+	return a, nil
 }
 
 // runHeadless runs the proxy without launching an opencode child process.

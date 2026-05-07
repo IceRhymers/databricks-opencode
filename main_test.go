@@ -14,149 +14,158 @@ import (
 
 // --- parseArgs tests ---
 
-func TestParseArgs_HelpLong(t *testing.T) {
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs([]string{"--help"})
-	if !showHelp {
-		t.Error("expected showHelp=true for --help")
+func mustParse(t *testing.T, args []string) *Args {
+	t.Helper()
+	a, err := parseArgs(args)
+	if err != nil {
+		t.Fatalf("parseArgs(%v) unexpected error: %v", args, err)
 	}
-	if verbose || version || printEnv || model != "" || upstream != "" || logFile != "" || profile != "" || len(opencodeArgs) != 0 {
+	return a
+}
+
+func TestParseArgs_HelpLong(t *testing.T) {
+	a := mustParse(t, []string{"--help"})
+	if !a.ShowHelp {
+		t.Error("expected ShowHelp=true for --help")
+	}
+	if a.Verbose || a.Version || a.PrintEnv || a.Model != "" || a.Upstream != "" || a.LogFile != "" || a.Profile != "" || len(a.OpencodeArgs) != 0 {
 		t.Error("unexpected non-default values alongside --help")
 	}
 }
 
 func TestParseArgs_HelpShort(t *testing.T) {
-	_, _, showHelp, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"-h"})
-	if !showHelp {
-		t.Error("expected showHelp=true for -h")
+	a := mustParse(t, []string{"-h"})
+	if !a.ShowHelp {
+		t.Error("expected ShowHelp=true for -h")
 	}
 }
 
 func TestParseArgs_PrintEnv(t *testing.T) {
-	_, _, _, printEnv, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--print-env"})
-	if !printEnv {
-		t.Error("expected printEnv=true for --print-env")
+	a := mustParse(t, []string{"--print-env"})
+	if !a.PrintEnv {
+		t.Error("expected PrintEnv=true for --print-env")
 	}
 }
 
 func TestParseArgs_Version(t *testing.T) {
-	_, version, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--version"})
-	if !version {
-		t.Error("expected version=true for --version")
+	a := mustParse(t, []string{"--version"})
+	if !a.Version {
+		t.Error("expected Version=true for --version")
 	}
 }
 
 func TestParseArgs_Verbose(t *testing.T) {
-	verbose, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--verbose"})
-	if !verbose {
-		t.Error("expected verbose=true for --verbose")
+	a := mustParse(t, []string{"--verbose"})
+	if !a.Verbose {
+		t.Error("expected Verbose=true for --verbose")
 	}
 }
 
 func TestParseArgs_VerboseShort(t *testing.T) {
-	verbose, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"-v"})
-	if !verbose {
-		t.Error("expected verbose=true for -v")
+	a := mustParse(t, []string{"-v"})
+	if !a.Verbose {
+		t.Error("expected Verbose=true for -v")
 	}
 }
 
 func TestParseArgs_LogFile(t *testing.T) {
-	_, _, _, _, _, _, logFile, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--log-file", "/tmp/test.log"})
-	if logFile != "/tmp/test.log" {
-		t.Errorf("expected logFile=%q, got %q", "/tmp/test.log", logFile)
+	a := mustParse(t, []string{"--log-file", "/tmp/test.log"})
+	if a.LogFile != "/tmp/test.log" {
+		t.Errorf("expected LogFile=%q, got %q", "/tmp/test.log", a.LogFile)
 	}
 }
 
 func TestParseArgs_LogFileEquals(t *testing.T) {
-	_, _, _, _, _, _, logFile, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--log-file=/tmp/test.log"})
-	if logFile != "/tmp/test.log" {
-		t.Errorf("expected logFile=%q, got %q", "/tmp/test.log", logFile)
+	a := mustParse(t, []string{"--log-file=/tmp/test.log"})
+	if a.LogFile != "/tmp/test.log" {
+		t.Errorf("expected LogFile=%q, got %q", "/tmp/test.log", a.LogFile)
 	}
 }
 
 func TestParseArgs_Upstream(t *testing.T) {
-	_, _, _, _, _, upstream, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--upstream", "https://gw.example.com/openai/v1"})
-	if upstream != "https://gw.example.com/openai/v1" {
-		t.Errorf("expected upstream=%q, got %q", "https://gw.example.com/openai/v1", upstream)
+	a := mustParse(t, []string{"--upstream", "https://gw.example.com/openai/v1"})
+	if a.Upstream != "https://gw.example.com/openai/v1" {
+		t.Errorf("expected Upstream=%q, got %q", "https://gw.example.com/openai/v1", a.Upstream)
 	}
 }
 
 func TestParseArgs_UpstreamEquals(t *testing.T) {
-	_, _, _, _, _, upstream, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--upstream=https://gw.example.com/openai/v1"})
-	if upstream != "https://gw.example.com/openai/v1" {
-		t.Errorf("expected upstream=%q, got %q", "https://gw.example.com/openai/v1", upstream)
+	a := mustParse(t, []string{"--upstream=https://gw.example.com/openai/v1"})
+	if a.Upstream != "https://gw.example.com/openai/v1" {
+		t.Errorf("expected Upstream=%q, got %q", "https://gw.example.com/openai/v1", a.Upstream)
 	}
 }
 
 func TestParseArgs_Model(t *testing.T) {
-	_, _, _, _, model, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--model", "gpt-4o"})
-	if model != "gpt-4o" {
-		t.Errorf("expected model=%q, got %q", "gpt-4o", model)
+	a := mustParse(t, []string{"--model", "gpt-4o"})
+	if a.Model != "gpt-4o" {
+		t.Errorf("expected Model=%q, got %q", "gpt-4o", a.Model)
 	}
 }
 
 func TestParseArgs_ModelEquals(t *testing.T) {
-	_, _, _, _, model, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--model=gpt-4o"})
-	if model != "gpt-4o" {
-		t.Errorf("expected model=%q, got %q", "gpt-4o", model)
+	a := mustParse(t, []string{"--model=gpt-4o"})
+	if a.Model != "gpt-4o" {
+		t.Errorf("expected Model=%q, got %q", "gpt-4o", a.Model)
 	}
 }
 
 func TestParseArgs_UnknownFlagPassthrough(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs([]string{"--unknown"})
-	if len(opencodeArgs) != 1 || opencodeArgs[0] != "--unknown" {
-		t.Errorf("expected opencodeArgs=[\"--unknown\"], got %v", opencodeArgs)
+	a := mustParse(t, []string{"--unknown"})
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--unknown" {
+		t.Errorf("expected OpencodeArgs=[\"--unknown\"], got %v", a.OpencodeArgs)
 	}
 }
 
 func TestParseArgs_EmptyArgs(t *testing.T) {
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs([]string{})
-	if verbose || version || showHelp || printEnv {
+	a := mustParse(t, []string{})
+	if a.Verbose || a.Version || a.ShowHelp || a.PrintEnv {
 		t.Error("expected all bool flags false for empty args")
 	}
-	if model != "" {
-		t.Errorf("expected empty model, got %q", model)
+	if a.Model != "" {
+		t.Errorf("expected empty Model, got %q", a.Model)
 	}
-	if upstream != "" {
-		t.Errorf("expected empty upstream, got %q", upstream)
+	if a.Upstream != "" {
+		t.Errorf("expected empty Upstream, got %q", a.Upstream)
 	}
-	if logFile != "" {
-		t.Errorf("expected empty logFile, got %q", logFile)
+	if a.LogFile != "" {
+		t.Errorf("expected empty LogFile, got %q", a.LogFile)
 	}
-	if profile != "" {
-		t.Errorf("expected empty profile, got %q", profile)
+	if a.Profile != "" {
+		t.Errorf("expected empty Profile, got %q", a.Profile)
 	}
-	if len(opencodeArgs) != 0 {
-		t.Errorf("expected no opencodeArgs, got %v", opencodeArgs)
+	if len(a.OpencodeArgs) != 0 {
+		t.Errorf("expected no OpencodeArgs, got %v", a.OpencodeArgs)
 	}
 }
 
 func TestParseArgs_Mixed(t *testing.T) {
-	verbose, _, showHelp, _, _, upstream, _, _, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--verbose", "--upstream", "https://gw.example.com", "--help"})
-	if !showHelp {
-		t.Error("expected showHelp=true")
+	a := mustParse(t, []string{"--verbose", "--upstream", "https://gw.example.com", "--help"})
+	if !a.ShowHelp {
+		t.Error("expected ShowHelp=true")
 	}
-	if !verbose {
-		t.Error("expected verbose=true")
+	if !a.Verbose {
+		t.Error("expected Verbose=true")
 	}
-	if upstream != "https://gw.example.com" {
-		t.Errorf("expected upstream=%q, got %q", "https://gw.example.com", upstream)
+	if a.Upstream != "https://gw.example.com" {
+		t.Errorf("expected Upstream=%q, got %q", "https://gw.example.com", a.Upstream)
 	}
 }
 
 func TestParseArgs_Separator(t *testing.T) {
-	verbose, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs([]string{"--verbose", "--", "--unknown", "arg1"})
-	if !verbose {
-		t.Error("expected verbose=true before separator")
+	a := mustParse(t, []string{"--verbose", "--", "--unknown", "arg1"})
+	if !a.Verbose {
+		t.Error("expected Verbose=true before separator")
 	}
-	if len(opencodeArgs) != 2 || opencodeArgs[0] != "--unknown" || opencodeArgs[1] != "arg1" {
-		t.Errorf("expected opencodeArgs=[\"--unknown\", \"arg1\"], got %v", opencodeArgs)
+	if len(a.OpencodeArgs) != 2 || a.OpencodeArgs[0] != "--unknown" || a.OpencodeArgs[1] != "arg1" {
+		t.Errorf("expected OpencodeArgs=[\"--unknown\", \"arg1\"], got %v", a.OpencodeArgs)
 	}
 }
 
 func TestParseArgs_PassthroughArgs(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs([]string{"prompt text", "--some-flag", "value"})
-	if len(opencodeArgs) != 3 {
-		t.Errorf("expected 3 opencodeArgs, got %d: %v", len(opencodeArgs), opencodeArgs)
+	a := mustParse(t, []string{"prompt text", "--some-flag", "value"})
+	if len(a.OpencodeArgs) != 3 {
+		t.Errorf("expected 3 OpencodeArgs, got %d: %v", len(a.OpencodeArgs), a.OpencodeArgs)
 	}
 }
 
@@ -258,34 +267,34 @@ func TestParseArgs_Table(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			verbose, version, showHelp, printEnv, model, upstream, logFile, profile, _, _, _, _, _, _, _, _, _, _, opencodeArgs, _ := parseArgs(tc.args)
+			a := mustParse(t, tc.args)
 
-			if verbose != tc.want.verbose {
-				t.Errorf("verbose: got %v, want %v", verbose, tc.want.verbose)
+			if a.Verbose != tc.want.verbose {
+				t.Errorf("verbose: got %v, want %v", a.Verbose, tc.want.verbose)
 			}
-			if version != tc.want.version {
-				t.Errorf("version: got %v, want %v", version, tc.want.version)
+			if a.Version != tc.want.version {
+				t.Errorf("version: got %v, want %v", a.Version, tc.want.version)
 			}
-			if showHelp != tc.want.showHelp {
-				t.Errorf("showHelp: got %v, want %v", showHelp, tc.want.showHelp)
+			if a.ShowHelp != tc.want.showHelp {
+				t.Errorf("showHelp: got %v, want %v", a.ShowHelp, tc.want.showHelp)
 			}
-			if printEnv != tc.want.printEnv {
-				t.Errorf("printEnv: got %v, want %v", printEnv, tc.want.printEnv)
+			if a.PrintEnv != tc.want.printEnv {
+				t.Errorf("printEnv: got %v, want %v", a.PrintEnv, tc.want.printEnv)
 			}
-			if model != tc.want.model {
-				t.Errorf("model: got %q, want %q", model, tc.want.model)
+			if a.Model != tc.want.model {
+				t.Errorf("model: got %q, want %q", a.Model, tc.want.model)
 			}
-			if upstream != tc.want.upstream {
-				t.Errorf("upstream: got %q, want %q", upstream, tc.want.upstream)
+			if a.Upstream != tc.want.upstream {
+				t.Errorf("upstream: got %q, want %q", a.Upstream, tc.want.upstream)
 			}
-			if logFile != tc.want.logFile {
-				t.Errorf("logFile: got %q, want %q", logFile, tc.want.logFile)
+			if a.LogFile != tc.want.logFile {
+				t.Errorf("logFile: got %q, want %q", a.LogFile, tc.want.logFile)
 			}
-			if profile != tc.want.profile {
-				t.Errorf("profile: got %q, want %q", profile, tc.want.profile)
+			if a.Profile != tc.want.profile {
+				t.Errorf("profile: got %q, want %q", a.Profile, tc.want.profile)
 			}
-			if len(opencodeArgs) != tc.want.opencodeLen {
-				t.Errorf("opencodeArgs length: got %d, want %d (args: %v)", len(opencodeArgs), tc.want.opencodeLen, opencodeArgs)
+			if len(a.OpencodeArgs) != tc.want.opencodeLen {
+				t.Errorf("opencodeArgs length: got %d, want %d (args: %v)", len(a.OpencodeArgs), tc.want.opencodeLen, a.OpencodeArgs)
 			}
 		})
 	}
@@ -439,16 +448,16 @@ func TestHandleHelp_ContainsOpenCodeCLISeparator(t *testing.T) {
 }
 
 func TestParseArgs_Profile(t *testing.T) {
-	_, _, _, _, _, _, _, profile, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--profile", "aidev"})
-	if profile != "aidev" {
-		t.Errorf("expected profile=%q, got %q", "aidev", profile)
+	a := mustParse(t, []string{"--profile", "aidev"})
+	if a.Profile != "aidev" {
+		t.Errorf("expected Profile=%q, got %q", "aidev", a.Profile)
 	}
 }
 
 func TestParseArgs_ProfileEquals(t *testing.T) {
-	_, _, _, _, _, _, _, profile, _, _, _, _, _, _, _, _, _, _, _, _ := parseArgs([]string{"--profile=production"})
-	if profile != "production" {
-		t.Errorf("expected profile=%q, got %q", "production", profile)
+	a := mustParse(t, []string{"--profile=production"})
+	if a.Profile != "production" {
+		t.Errorf("expected Profile=%q, got %q", "production", a.Profile)
 	}
 }
 
@@ -532,37 +541,37 @@ func TestProfileResolution_DefaultWhenNoStateFile(t *testing.T) {
 }
 
 func TestParseArgs_Port(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, port, _, _, _, _, _, _, _, _ := parseArgs([]string{"--port", "8080"})
-	if port != 8080 {
-		t.Errorf("expected port=8080, got %d", port)
+	a := mustParse(t, []string{"--port", "8080"})
+	if a.Port != 8080 {
+		t.Errorf("expected Port=8080, got %d", a.Port)
 	}
 }
 
 func TestParseArgs_PortEquals(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, port, _, _, _, _, _, _, _, _ := parseArgs([]string{"--port=9000"})
-	if port != 9000 {
-		t.Errorf("expected port=9000, got %d", port)
+	a := mustParse(t, []string{"--port=9000"})
+	if a.Port != 9000 {
+		t.Errorf("expected Port=9000, got %d", a.Port)
 	}
 }
 
 func TestParseArgs_Headless(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, headless, _, _, _, _, _, _, _ := parseArgs([]string{"--headless"})
-	if !headless {
-		t.Error("expected headless=true for --headless")
+	a := mustParse(t, []string{"--headless"})
+	if !a.Headless {
+		t.Error("expected Headless=true for --headless")
 	}
 }
 
 func TestParseArgs_NoUpdateCheck(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, noUpdateCheck, _, _ := parseArgs([]string{"--no-update-check"})
-	if !noUpdateCheck {
-		t.Error("expected noUpdateCheck=true for --no-update-check")
+	a := mustParse(t, []string{"--no-update-check"})
+	if !a.NoUpdateCheck {
+		t.Error("expected NoUpdateCheck=true for --no-update-check")
 	}
 }
 
 func TestParseArgs_HeadlessDefault(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, headless, _, _, _, _, _, _, _ := parseArgs([]string{})
-	if headless {
-		t.Error("expected headless=false for empty args")
+	a := mustParse(t, []string{})
+	if a.Headless {
+		t.Error("expected Headless=false for empty args")
 	}
 }
 
@@ -623,7 +632,7 @@ func TestKnownFlagsCoverAllFlagDefs(t *testing.T) {
 // --- --idle-timeout strict parsing tests (issue #72) ---
 
 func TestParseArgs_IdleTimeoutInvalidWord(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, err := parseArgs([]string{"--idle-timeout=5min"})
+	_, err := parseArgs([]string{"--idle-timeout=5min"})
 	if err == nil {
 		t.Fatal("expected error for --idle-timeout=5min, got nil")
 	}
@@ -634,7 +643,7 @@ func TestParseArgs_IdleTimeoutInvalidWord(t *testing.T) {
 
 func TestParseArgs_IdleTimeoutBareNumberRejected(t *testing.T) {
 	// Was previously interpreted as 30 minutes — must now error.
-	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, err := parseArgs([]string{"--idle-timeout=30"})
+	_, err := parseArgs([]string{"--idle-timeout=30"})
 	if err == nil {
 		t.Fatal("expected error for bare number --idle-timeout=30, got nil")
 	}
@@ -652,23 +661,23 @@ func TestParseArgs_IdleTimeoutValidDurations(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.raw, func(t *testing.T) {
-			_, _, _, _, _, _, _, _, _, _, _, _, _, idle, _, _, _, _, _, err := parseArgs([]string{"--idle-timeout=" + c.raw})
+			a, err := parseArgs([]string{"--idle-timeout=" + c.raw})
 			if err != nil {
 				t.Fatalf("expected no error for --idle-timeout=%s, got %v", c.raw, err)
 			}
-			if idle != c.want {
-				t.Errorf("--idle-timeout=%s: got %v, want %v", c.raw, idle, c.want)
+			if a.IdleTimeout != c.want {
+				t.Errorf("--idle-timeout=%s: got %v, want %v", c.raw, a.IdleTimeout, c.want)
 			}
 		})
 	}
 }
 
 func TestParseArgs_IdleTimeoutSpaceSeparated(t *testing.T) {
-	_, _, _, _, _, _, _, _, _, _, _, _, _, idle, _, _, _, _, _, err := parseArgs([]string{"--idle-timeout", "1h"})
+	a, err := parseArgs([]string{"--idle-timeout", "1h"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if idle != time.Hour {
-		t.Errorf("expected 1h, got %v", idle)
+	if a.IdleTimeout != time.Hour {
+		t.Errorf("expected 1h, got %v", a.IdleTimeout)
 	}
 }
