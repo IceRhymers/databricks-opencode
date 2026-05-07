@@ -1,6 +1,11 @@
 // Package jsonconfig manages the OpenCode CLI config.json file.
 // It uses github.com/tidwall/jsonc to strip comments and trailing commas
 // before parsing, allowing users to write JSONC in their config files.
+//
+// Design: surgical patching only. opencode is a patch-and-leave-it
+// persistent config — we own the `provider.databricks-proxy` key and
+// rewrite it idempotently via Patch on every run that NeedsConfig
+// reports stale. No backup, no restore, no crash-recovery sidecar.
 package jsonconfig
 
 import (
@@ -12,106 +17,29 @@ import (
 	"github.com/tidwall/jsonc"
 )
 
-// sentinel is used to distinguish "key was absent" from "key was empty string".
-var absent = struct{}{}
-
-// Config reads, patches, and restores the OpenCode config.json file.
+// Config reads and patches the OpenCode config.json file.
 type Config struct {
-	path         string
-	backupPath   string
-	sidecarPath  string
-	originals    map[string]interface{} // key -> original value, or absent sentinel
+	path string
 }
 
 // New creates a Config that manages opencode.json in the given config directory.
 // The caller should pass the OS-specific opencode config dir (e.g. from opencodeConfigDir()).
 func New(dir string) *Config {
 	return &Config{
-		path:        filepath.Join(dir, "opencode.json"),
-		backupPath:  filepath.Join(dir, "opencode.json.databricks-opencode-backup"),
-		sidecarPath: filepath.Join(dir, ".databricks-opencode-originals.json"),
-		originals:   make(map[string]interface{}),
+		path: filepath.Join(dir, "opencode.json"),
 	}
 }
 
-// NewWithPath creates a Config with explicit paths (for testing).
-func NewWithPath(configPath, backupPath string) *Config {
-	dir := filepath.Dir(configPath)
+// NewWithPath creates a Config with an explicit config path (for testing).
+func NewWithPath(configPath string) *Config {
 	return &Config{
-		path:        configPath,
-		backupPath:  backupPath,
-		sidecarPath: filepath.Join(dir, ".databricks-opencode-originals.json"),
-		originals:   make(map[string]interface{}),
+		path: configPath,
 	}
 }
 
 // Path returns the config file path.
 func (c *Config) Path() string {
 	return c.path
-}
-
-// BackupPath returns the backup file path.
-func (c *Config) BackupPath() string {
-	return c.backupPath
-}
-
-// SidecarPath returns the sidecar file path.
-func (c *Config) SidecarPath() string {
-	return c.sidecarPath
-}
-
-// HasBackup reports whether a backup sentinel file exists.
-func (c *Config) HasBackup() bool {
-	_, err := os.Stat(c.backupPath)
-	return err == nil
-}
-
-// HasSidecar reports whether a sidecar file exists (crash recovery indicator).
-func (c *Config) HasSidecar() bool {
-	_, err := os.Stat(c.sidecarPath)
-	return err == nil
-}
-
-// WriteSentinel writes an empty backup sentinel file for crash detection.
-func (c *Config) WriteSentinel() error {
-	return atomicWrite(c.backupPath, nil)
-}
-
-// RemoveSentinel removes the backup sentinel file.
-func (c *Config) RemoveSentinel() {
-	os.Remove(c.backupPath)
-}
-
-// SaveOriginals snapshots the current values of managed keys before patching.
-// Writes a sidecar file so crash recovery can restore these values.
-func (c *Config) SaveOriginals() error {
-	config, err := c.readConfig()
-	if err != nil {
-		return err
-	}
-
-	c.originals = make(map[string]interface{})
-
-	// Snapshot model key.
-	if v, ok := config["model"]; ok {
-		c.originals["model"] = v
-	} else {
-		c.originals["model"] = absent
-	}
-
-	// Snapshot provider.databricks-proxy key.
-	providers, _ := config["provider"].(map[string]interface{})
-	if providers != nil {
-		if v, ok := providers["databricks-proxy"]; ok {
-			c.originals["provider.databricks-proxy"] = v
-		} else {
-			c.originals["provider.databricks-proxy"] = absent
-		}
-	} else {
-		c.originals["provider.databricks-proxy"] = absent
-	}
-
-	return c.writeSidecar()
 }
 
 // Patch injects the databricks-proxy provider and optionally sets the model.
@@ -142,9 +70,6 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 		// Register all available Databricks Claude models so users can switch
 		// between them in OpenCode's model picker without manual config edits.
 		// The active model is controlled by the top-level "model" key below.
-		// Register all available Databricks Claude models so users can switch
-		// between them in OpenCode's model picker without manual config edits.
-		// The active model is controlled by the top-level "model" key below.
 		"models": map[string]interface{}{
 			"databricks-claude-opus-4-7":   map[string]interface{}{},
 			"databricks-claude-opus-4-6":   map[string]interface{}{},
@@ -166,68 +91,6 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 	}
 
 	return c.writeConfig(config)
-}
-
-// Restore surgically removes only the keys we manage and restores originals.
-// Removes provider.databricks-proxy and restores model to its original value.
-func (c *Config) Restore() error {
-	// Load originals from sidecar if not in memory.
-	if len(c.originals) == 0 {
-		if err := c.loadSidecar(); err != nil {
-			// No sidecar — nothing to restore surgically.
-			// Fall back to removing sentinel only.
-			os.Remove(c.backupPath)
-			return nil
-		}
-	}
-
-	config, err := c.readConfig()
-	if err != nil {
-		// Config doesn't exist — just clean up.
-		c.cleanup()
-		return nil
-	}
-
-	// Restore model key.
-	if orig, ok := c.originals["model"]; ok {
-		if orig == absent {
-			delete(config, "model")
-		} else {
-			config["model"] = orig
-		}
-	}
-
-	// Remove provider.databricks-proxy.
-	if providers, ok := config["provider"].(map[string]interface{}); ok {
-		if orig, exists := c.originals["provider.databricks-proxy"]; exists {
-			if orig == absent {
-				delete(providers, "databricks-proxy")
-			} else {
-				providers["databricks-proxy"] = orig
-			}
-		} else {
-			delete(providers, "databricks-proxy")
-		}
-		// If providers map is now empty, remove it.
-		if len(providers) == 0 {
-			delete(config, "provider")
-		} else {
-			config["provider"] = providers
-		}
-	}
-
-	if err := c.writeConfig(config); err != nil {
-		return err
-	}
-
-	c.cleanup()
-	return nil
-}
-
-// Backup is kept as a crash-detection sentinel writer.
-// It no longer copies the full file — just writes an empty marker.
-func (c *Config) Backup() error {
-	return c.WriteSentinel()
 }
 
 // NeedsConfig returns true if config.json needs to be written (or rewritten)
@@ -341,78 +204,6 @@ func (c *Config) RemovePlugin(pluginPath string) error {
 	}
 
 	return c.writeConfig(config)
-}
-
-// cleanup removes sidecar and backup sentinel files.
-func (c *Config) cleanup() {
-	os.Remove(c.sidecarPath)
-	os.Remove(c.backupPath)
-	c.originals = make(map[string]interface{})
-}
-
-// sidecarData is the JSON schema for the sidecar file.
-type sidecarData struct {
-	Model              interface{} `json:"model"`
-	ModelAbsent        bool        `json:"model_absent"`
-	ProviderDBProxy    interface{} `json:"provider_databricks_proxy"`
-	ProviderDBPAbsent  bool        `json:"provider_databricks_proxy_absent"`
-}
-
-// writeSidecar persists originals to disk for crash recovery.
-func (c *Config) writeSidecar() error {
-	sd := sidecarData{}
-
-	if v, ok := c.originals["model"]; ok {
-		if v == absent {
-			sd.ModelAbsent = true
-		} else {
-			sd.Model = v
-		}
-	}
-
-	if v, ok := c.originals["provider.databricks-proxy"]; ok {
-		if v == absent {
-			sd.ProviderDBPAbsent = true
-		} else {
-			sd.ProviderDBProxy = v
-		}
-	}
-
-	data, err := json.MarshalIndent(sd, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return atomicWrite(c.sidecarPath, data)
-}
-
-// loadSidecar reads originals from the sidecar file.
-func (c *Config) loadSidecar() error {
-	data, err := os.ReadFile(c.sidecarPath)
-	if err != nil {
-		return err
-	}
-
-	var sd sidecarData
-	if err := json.Unmarshal(data, &sd); err != nil {
-		return err
-	}
-
-	c.originals = make(map[string]interface{})
-
-	if sd.ModelAbsent {
-		c.originals["model"] = absent
-	} else {
-		c.originals["model"] = sd.Model
-	}
-
-	if sd.ProviderDBPAbsent {
-		c.originals["provider.databricks-proxy"] = absent
-	} else {
-		c.originals["provider.databricks-proxy"] = sd.ProviderDBProxy
-	}
-
-	return nil
 }
 
 // readConfig reads the config file and returns a parsed map.

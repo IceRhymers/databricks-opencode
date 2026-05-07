@@ -13,25 +13,25 @@ A lightweight Go proxy wrapper for OpenCode CLI that routes inference requests t
 | File | Purpose |
 |------|---------|
 | `main.go` | Entry point: parses flags, resolves profile/model, discovers gateway URL, starts proxy, patches config, runs opencode |
-| `config.go` | ConfigManager: coordinates config.json patching, file locking, session registry, crash recovery |
+| `config.go` | EnsureConfig: idempotent patch of config.json (no backup, no restore — config persists pointing at the fixed proxy port) |
 | `token.go` | Token management: databricksFetcher implements tokencache.TokenFetcher via Databricks CLI; host discovery |
 | `proxy.go` | ProxyConfig and proxy wrappers; wraps databricks-claude/pkg/proxy |
 | `process.go` | RunOpenCode: executes opencode as a child process with args |
 | `state.go` | loadState/saveState: persists profile and model selection to ~/.config/opencode/.state.json |
 | `lock.go` | filelock wrapper: multi-session safe config access |
-| `registry.go` | session registry wrapper: multi-session proxy handoff and crash recovery |
+| `registry.go` | session registry wrapper: multi-session proxy handoff |
 | `go.mod` | Dependencies: databricks-claude v0.5.0, tidwall/jsonc v0.3.2 |
 | `Makefile` | Build targets: build, install, test, dist (cross-compile), clean, lint |
 | `README.md` | User guide: quick start, flags, architecture, installation |
 | `.github/workflows/ci.yml` | CI: runs tests, vet, build on pull requests to master |
-| `pkg/jsonconfig/jsonconfig.go` | Config patching: JSONC-aware reader/writer, managed key snapshot/restore |
+| `pkg/jsonconfig/jsonconfig.go` | Config patching: JSONC-aware reader/writer, surgical Patch/NeedsConfig/UpdateProxyURL/AddPlugin/RemovePlugin |
 | `pkg/jsonconfig/jsonconfig_test.go` | Tests for jsonconfig |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `pkg/jsonconfig/` | JSONC-aware OpenCode config manager (JSONC parsing, surgical patch/restore) |
+| `pkg/jsonconfig/` | JSONC-aware OpenCode config manager (JSONC parsing, surgical patch — no restore) |
 | `.github/workflows/` | CI pipeline configuration |
 
 ## For AI Agents
@@ -72,17 +72,17 @@ make clean
    - Host discovered via `databricks auth env --profile <profile> --output json` → `DATABRICKS_HOST`
    - Gateway URL: `{host}/ai-gateway/anthropic`
 
-4. **Config Patching and Restoration (JSONC-Aware)**
-   - Snapshots original values of managed keys before patching (stored in `.databricks-opencode-originals.json` sidecar)
-   - Patches `~/.config/opencode/opencode.json`: sets `provider.anthropic.options.baseURL` to local proxy, `apiKey` to placeholder, injects 5 model entries
-   - On restore: surgically removes only injected keys, preserves user config
+4. **Config Patching (JSONC-Aware, Patch-and-Leave-It)**
+   - Patches `~/.config/opencode/opencode.json`: injects `provider.databricks-proxy` with the local proxy `baseURL`, placeholder `apiKey`, and the registered Databricks Claude model entries
+   - Idempotent: `NeedsConfig` short-circuits when the existing file already points at the same proxy URL
+   - Surgical: only the managed keys are touched — user keys (`commands`, `agents`, other providers, `theme`, etc.) are preserved
+   - The config persists pointing at the fixed local port; **there is no backup, no restore, and no crash-recovery sidecar**. Subsequent runs simply re-validate via `NeedsConfig` and re-patch only if needed.
    - Supports JSONC (JSON with comments and trailing commas) via `tidwall/jsonc`
 
-5. **Multi-Session Support and Crash Recovery**
+5. **Multi-Session Support**
    - Session registry at `~/.config/opencode/.sessions.json` tracks active proxies by PID
-   - On startup: checks for sidecar/backup sentinels; if found, either hands off to surviving session or restores from crash
-   - On exit: unregisters session; if others alive, hands off config to most recent; otherwise restores fully
    - File locking (`filelock.FileLock`) prevents concurrent config mutations
+   - On startup with another live session: hand off via `UpdateProxyURL` rather than re-patching the full provider block
 
 6. **Proxy Startup**
    - Proxy listens on `127.0.0.1:0` (random available port)
@@ -90,10 +90,9 @@ make clean
    - Supports HTTP (default) and HTTPS (with `--tls-cert` and `--tls-key`)
    - No OTEL upstream needed for OpenCode (inference-only)
 
-7. **OpenCode Launch and Cleanup**
-   - Patches config, starts proxy, launches opencode as child with user-provided args
-   - **Critical**: restores config.json explicitly before `os.Exit()` (not deferred, since `os.Exit()` skips defers)
-   - Crash recovery: sidecar file survives process death and guides restoration on next run
+7. **OpenCode Launch**
+   - Patches config (idempotently), starts proxy, launches opencode as child with user-provided args
+   - On exit, the patched config is left in place — opencode's persistent config keeps pointing at the local proxy URL across runs, and the next run re-patches only if `NeedsConfig` reports drift
 
 8. **Flag Parsing**
    - Databricks-opencode flags: `--profile`, `--model`, `--upstream`, `--log-file`, `--verbose`, `--version`, `--help`, `--print-env`, `--proxy-api-key`, `--tls-cert`, `--tls-key`
@@ -106,9 +105,8 @@ make clean
 - **Timeout on token fetch and host discovery**: 10 seconds; context-aware
 - **Security warnings**: `proxy.SecurityChecks()` emitted to stderr on startup (e.g., binding to localhost only)
 - **Logging**: disabled by default (io.Discard); `--verbose` sends logs to stderr; `--log-file` writes to file (combinable)
-- **Config backup sentinel**: empty file at `~/.config/opencode/opencode.json.databricks-opencode-backup` for crash detection (no full copy)
-- **Sidecar format**: JSON with boolean flags for "absent" markers (to distinguish "key was absent" from "key was empty string")
 - **Atomic writes**: config changes use temp file + rename for crash safety
+- **No restore on exit**: the patched config persists pointing at the fixed local proxy port across runs; `NeedsConfig` gates idempotent re-patching on subsequent startups
 
 ## Dependencies
 
