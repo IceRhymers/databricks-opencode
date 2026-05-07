@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.6.0...v0.7.0) (2026-05-07)
+
+
+### Features
+
+* parseArgs returns (*Args, error) ([bdece27](https://github.com/IceRhymers/databricks-opencode/commit/bdece27238d989b023f8687ea25c365e3e50f75f)), closes [#79](https://github.com/IceRhymers/databricks-opencode/issues/79)
+* phase 2 — strict --idle-timeout + broadened redaction ([6f0cf11](https://github.com/IceRhymers/databricks-opencode/commit/6f0cf11a8ef94e7fb26b848506d704b5807c6907))
+
+
+### Bug Fixes
+
+* strict --idle-timeout parse and broadened token redaction ([9c7b973](https://github.com/IceRhymers/databricks-opencode/commit/9c7b9737c0712665df4734c98a0e18a7f924fd67)), closes [#72](https://github.com/IceRhymers/databricks-opencode/issues/72) [#73](https://github.com/IceRhymers/databricks-opencode/issues/73)
+* surface headless.Ensure error from headlessEnsure ([a980e33](https://github.com/IceRhymers/databricks-opencode/commit/a980e337117a32511fb6480455af773a05cd8742))
+
 ## [0.6.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.5.0...v0.6.0) (2026-05-04)
 
 
