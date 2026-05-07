@@ -175,7 +175,7 @@ func main() {
 	}
 
 	// --- Ensure the user is authenticated before proceeding ---
-	if err := authcheck.EnsureAuthenticated(profile, "opencode"); err != nil {
+	if err := authcheck.EnsureAuthenticated(profile, ""); err != nil {
 		log.Fatalf("databricks-opencode: auth failed: %v", err)
 	}
 
