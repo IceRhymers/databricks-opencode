@@ -98,7 +98,9 @@ func main() {
 	if headlessEnsureFlag {
 		state := loadState()
 		port := resolvePort(0, state)
-		headlessEnsure(port)
+		if err := headlessEnsure(port); err != nil {
+			log.Fatalf("databricks-opencode: headless ensure failed: %v", err)
+		}
 		os.Exit(0)
 	}
 
@@ -173,7 +175,7 @@ func main() {
 	}
 
 	// --- Ensure the user is authenticated before proceeding ---
-	if err := authcheck.EnsureAuthenticated(profile); err != nil {
+	if err := authcheck.EnsureAuthenticated(profile, ""); err != nil {
 		log.Fatalf("databricks-opencode: auth failed: %v", err)
 	}
 
@@ -254,7 +256,7 @@ func main() {
 	}
 
 	// --- Build proxy handler (needed by both owner and watchdog) ---
-	proxyHandler := NewProxyServer(&ProxyConfig{
+	proxyHandler, err := NewProxyServer(&ProxyConfig{
 		InferenceUpstream: gatewayURL,
 		TokenProvider:     tp,
 		Verbose:           verbose,
@@ -262,27 +264,9 @@ func main() {
 		TLSCertFile:       tlsCert,
 		TLSKeyFile:        tlsKey,
 	})
-
-	// --- If we own the listener, start the proxy on it ---
-	if isOwner {
-		servedLn, err := proxy.Serve(listener, proxyHandler, tlsCert, tlsKey)
-		if err != nil {
-			log.Fatalf("databricks-opencode: failed to start proxy: %v", err)
-		}
-		listener = servedLn
-		log.Printf("databricks-opencode: proxy owner on :%d", port)
-	} else {
-		log.Printf("databricks-opencode: joining existing proxy on :%d", port)
-		// Watch for owner death and take over the proxy if needed.
-		go health.WatchProxy(port, proxyHandler, tlsCert, tlsKey, "databricks-opencode")
+	if err != nil {
+		log.Fatalf("databricks-opencode: failed to create proxy server: %v", err)
 	}
-
-	proxyScheme := "http"
-	if tlsCert != "" && tlsKey != "" {
-		proxyScheme = "https"
-	}
-	proxyAddr := fmt.Sprintf("%s://127.0.0.1:%d", proxyScheme, portbind.ListenerPort(listener, port))
-	log.Printf("databricks-opencode: local proxy %s -> %s", proxyAddr, gatewayURL)
 
 	// --- Reference counting (wrapper mode only) ---
 	// In wrapper mode, the parent process acquires here and releases on exit.
@@ -296,19 +280,54 @@ func main() {
 	}
 
 	// In headless mode, wrap handler with /shutdown endpoint and idle timeout.
+	// promoteCh, when non-nil, lets a non-owner be promoted to owner via the
+	// health watcher's onTakeover callback (so /shutdown can fire correctly
+	// after a takeover).
 	var doneCh chan struct{}
+	var promoteCh chan struct{}
 	if headless {
 		doneCh = make(chan struct{})
+		promoteCh = make(chan struct{})
 		proxyHandler = lifecycle.WrapWithLifecycle(lifecycle.Config{
 			Inner:        proxyHandler,
 			RefcountPath: "",
 			IsOwner:      isOwner,
+			PromoteCh:    promoteCh,
 			IdleTimeout:  idleTimeout,
 			APIKey:       proxyAPIKey,
 			DoneCh:       doneCh,
 			LogPrefix:    "databricks-opencode",
 		})
 	}
+
+	// --- If we own the listener, start the proxy on it ---
+	if isOwner {
+		servedLn, err := proxy.Serve(listener, proxyHandler, tlsCert, tlsKey)
+		if err != nil {
+			log.Fatalf("databricks-opencode: failed to start proxy: %v", err)
+		}
+		listener = servedLn
+		log.Printf("databricks-opencode: proxy owner on :%d", port)
+	} else {
+		log.Printf("databricks-opencode: joining existing proxy on :%d", port)
+		// Watch for owner death and take over the proxy if needed.
+		// onTakeover closes promoteCh so the lifecycle wrapper promotes this
+		// process to owner, enabling /shutdown to trigger a clean shutdown.
+		onTakeover := func() {
+			if promoteCh != nil {
+				close(promoteCh)
+			}
+		}
+		go health.WatchProxy(port, proxyHandler, tlsCert, tlsKey, "databricks-opencode", onTakeover)
+	}
+
+	proxyScheme := "http"
+	if tlsCert != "" && tlsKey != "" {
+		proxyScheme = "https"
+	}
+	proxyAddr := fmt.Sprintf("%s://127.0.0.1:%d", proxyScheme, portbind.ListenerPort(listener, port))
+	log.Printf("databricks-opencode: local proxy %s -> %s", proxyAddr, gatewayURL)
+
 
 	// --- Ensure config.json points at the local proxy (idempotent) ---
 	// Use proxyAPIKey if explicitly set; otherwise use a fixed placeholder.

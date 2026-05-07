@@ -16,13 +16,13 @@ import (
 //
 // No refcount is acquired here — OpenCode has no exit hook to release it,
 // so the proxy relies on its idle timeout for shutdown instead.
-func headlessEnsure(port int) {
+func headlessEnsure(port int) error {
 	s := loadState()
 	scheme := "http"
 	if s.TLSCert != "" {
 		scheme = "https"
 	}
-	headless.Ensure(headless.Config{
+	return headless.Ensure(headless.Config{
 		Port:          port,
 		Scheme:        scheme,
 		TLSCert:       s.TLSCert,

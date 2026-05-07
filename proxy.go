@@ -20,7 +20,7 @@ type ProxyConfig struct {
 
 // NewProxyServer returns an http.Handler that routes requests to the
 // inference upstream. No OTEL upstream is needed for OpenCode.
-func NewProxyServer(config *ProxyConfig) http.Handler {
+func NewProxyServer(config *ProxyConfig) (http.Handler, error) {
 	return proxy.NewServer(&proxy.Config{
 		InferenceUpstream: config.InferenceUpstream,
 		TokenSource:       config.TokenProvider,
