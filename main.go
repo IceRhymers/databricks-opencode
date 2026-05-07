@@ -98,7 +98,9 @@ func main() {
 	if headlessEnsureFlag {
 		state := loadState()
 		port := resolvePort(0, state)
-		headlessEnsure(port)
+		if err := headlessEnsure(port); err != nil {
+			log.Fatalf("databricks-opencode: headless ensure failed: %v", err)
+		}
 		os.Exit(0)
 	}
 
