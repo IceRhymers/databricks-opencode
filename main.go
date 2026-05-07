@@ -65,7 +65,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, noUpdateCheck, opencodeArgs := parseArgs(os.Args[1:])
+	verbose, version, showHelp, printEnv, model, upstream, logFile, profile, proxyAPIKey, tlsCert, tlsKey, portFlag, headless, idleTimeout, installHooksFlag, uninstallHooksFlag, headlessEnsureFlag, noUpdateCheck, opencodeArgs, parseErr := parseArgs(os.Args[1:])
+	if parseErr != nil {
+		fmt.Fprintln(os.Stderr, "databricks-opencode:", parseErr)
+		os.Exit(1)
+	}
 
 	if showHelp {
 		handleHelp(upstream)
@@ -386,7 +390,7 @@ func main() {
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
-func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, noUpdateCheck bool, opencodeArgs []string) {
+func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printEnv bool, model string, upstream string, logFile string, profile string, proxyAPIKey string, tlsCert string, tlsKey string, port int, headless bool, idleTimeout time.Duration, installHooksFlag bool, uninstallHooksFlag bool, headlessEnsureFlag bool, noUpdateCheck bool, opencodeArgs []string, err error) {
 	idleTimeout = 30 * time.Minute // default
 
 	// knownFlags is defined at package level in completion_flags.go,
@@ -496,11 +500,11 @@ func parseArgs(args []string) (verbose bool, version bool, showHelp bool, printE
 						raw = args[i]
 					}
 					if raw != "" {
-						if d, err := time.ParseDuration(raw); err == nil {
-							idleTimeout = d
-						} else if mins, err := strconv.Atoi(raw); err == nil {
-							idleTimeout = time.Duration(mins) * time.Minute
+						d, perr := time.ParseDuration(raw)
+						if perr != nil {
+							return false, false, false, false, "", "", "", "", "", "", "", 0, false, 0, false, false, false, false, nil, fmt.Errorf("--idle-timeout: %q is not a valid duration (use e.g. 30s, 5m, 1h)", raw)
 						}
+						idleTimeout = d
 					}
 				case "--install-hooks":
 					installHooksFlag = true
@@ -566,7 +570,7 @@ Databricks-OpenCode Flags:
   --tls-key string          Path to TLS private key file (requires --tls-cert)
   --port int                Local proxy port (default: 49156, saved for future sessions)
   --headless            Start proxy without launching opencode (for IDE extensions)
-  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables, bare number = minutes)
+  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables; use e.g. 30s, 5m, 1h)
   --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
   --uninstall-hooks     Remove databricks-opencode plugin from opencode config
   --headless-ensure     Start proxy if not running (called by opencode plugin at init)
@@ -616,10 +620,8 @@ func buildUpdaterConfig() updater.Config {
 
 // handlePrintEnv prints resolved configuration with the token redacted.
 func handlePrintEnv(databricksHost, openaiBaseURL, token, profile, model string) {
+	_ = token // intentionally never printed; always redacted to a fixed sentinel
 	redacted := "**** (redacted)"
-	if strings.HasPrefix(token, "dapi-") {
-		redacted = "dapi-***"
-	}
 
 	opencodePath := "(not found)"
 	if p, err := exec.LookPath("opencode"); err == nil {
