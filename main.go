@@ -35,7 +35,7 @@ func main() {
 	// completion <shell> — must be the very first check, before any flag parsing,
 	// auth, or state loading. Safe to call in the Homebrew install sandbox.
 	if len(os.Args) >= 2 && os.Args[1] == "completion" {
-		completion.Run(os.Args[2:], flagDefs, "databricks-opencode")
+		completion.Run(os.Args[2:], flagDefs, "databricks-opencode", knownSubcommands...)
 		os.Exit(0)
 	}
 
@@ -45,6 +45,15 @@ func main() {
 	// doesn't have to fight with the transparent-passthrough behaviour.
 	if len(os.Args) >= 2 && os.Args[1] == "config" {
 		runConfigCommand(os.Args[2:])
+		return
+	}
+
+	// `hooks` subcommand — opencode plugin lifecycle. Replaces the removed
+	// --install-hooks / --uninstall-hooks / --headless-ensure root flags.
+	// Routed before parseArgs so positional dispatch doesn't have to fight
+	// with the transparent-passthrough behaviour.
+	if len(os.Args) >= 2 && os.Args[1] == "hooks" {
+		runHooksCommand(os.Args[2:])
 		return
 	}
 
@@ -94,9 +103,6 @@ func main() {
 	portFlag := a.Port
 	headless := a.Headless
 	idleTimeout := a.IdleTimeout
-	installHooksFlag := a.InstallHooksFlag
-	uninstallHooksFlag := a.UninstallHooksFlag
-	headlessEnsureFlag := a.HeadlessEnsureFlag
 	noUpdateCheck := a.NoUpdateCheck
 	opencodeArgs := a.OpencodeArgs
 
@@ -107,33 +113,6 @@ func main() {
 
 	if version {
 		fmt.Printf("databricks-opencode %s\n", Version)
-		os.Exit(0)
-	}
-
-	// --- Hook lifecycle commands (handled before auth/config setup) ---
-	if installHooksFlag || uninstallHooksFlag {
-		if installHooksFlag {
-			if err := installHooks(); err != nil {
-				log.Fatalf("databricks-opencode: --install-hooks: %v", err)
-			}
-			hookDir, _ := opencodeConfigDir()
-			fmt.Fprintf(os.Stderr, "databricks-opencode: hooks installed — opencode plugin written to %s\n", filepath.Join(hookDir, "plugins", "databricks-proxy", "index.js"))
-		} else {
-			if err := uninstallHooks(); err != nil {
-				log.Fatalf("databricks-opencode: --uninstall-hooks: %v", err)
-			}
-			fmt.Fprintln(os.Stderr, "databricks-opencode: hooks removed from opencode config")
-		}
-		os.Exit(0)
-	}
-
-	// --- Headless hook command (called by the opencode plugin, not by end users) ---
-	if headlessEnsureFlag {
-		state := loadState()
-		port := resolvePort(0, state)
-		if err := headlessEnsure(port); err != nil {
-			log.Fatalf("databricks-opencode: headless ensure failed: %v", err)
-		}
 		os.Exit(0)
 	}
 
@@ -413,24 +392,21 @@ func main() {
 
 // Args holds all parsed databricks-opencode flags plus the residual opencode args.
 type Args struct {
-	Verbose            bool
-	Version            bool
-	ShowHelp           bool
-	Model              string
-	Upstream           string
-	LogFile            string
-	Profile            string
-	ProxyAPIKey        string
-	TLSCert            string
-	TLSKey             string
-	Port               int
-	Headless           bool
-	IdleTimeout        time.Duration
-	InstallHooksFlag   bool
-	UninstallHooksFlag bool
-	HeadlessEnsureFlag bool
-	NoUpdateCheck      bool
-	OpencodeArgs       []string
+	Verbose       bool
+	Version       bool
+	ShowHelp      bool
+	Model         string
+	Upstream      string
+	LogFile       string
+	Profile       string
+	ProxyAPIKey   string
+	TLSCert       string
+	TLSKey        string
+	Port          int
+	Headless      bool
+	IdleTimeout   time.Duration
+	NoUpdateCheck bool
+	OpencodeArgs  []string
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
@@ -550,12 +526,6 @@ func parseArgs(args []string) (*Args, error) {
 						}
 						a.IdleTimeout = d
 					}
-				case "--install-hooks":
-					a.InstallHooksFlag = true
-				case "--uninstall-hooks":
-					a.UninstallHooksFlag = true
-				case "--headless-ensure":
-					a.HeadlessEnsureFlag = true
 				case "--no-update-check":
 					a.NoUpdateCheck = true
 				default:

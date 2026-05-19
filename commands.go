@@ -74,9 +74,6 @@ var rootCommand = cmd.Command{
 		{Name: "tls-key", Description: "TLS private key file for the local proxy (requires --tls-cert)", TakesArg: true, Completer: "__files"},
 		{Name: "headless", Description: "Start proxy without launching opencode (for IDE extensions or hooks)"},
 		{Name: "idle-timeout", Description: "Idle timeout for headless mode (default 30m; 0 disables; bare number = minutes)", TakesArg: true},
-		{Name: "install-hooks", Description: "Install opencode plugin for automatic proxy lifecycle"},
-		{Name: "uninstall-hooks", Description: "Remove databricks-opencode plugin from opencode"},
-		{Name: "headless-ensure", Description: "Ensure headless proxy is running (called by opencode plugin)"},
 		{Name: "no-update-check", Description: "Skip the automatic update check on startup", EnvVar: "DATABRICKS_NO_UPDATE_CHECK"},
 	},
 
@@ -89,6 +86,7 @@ var rootCommand = cmd.Command{
 		{Name: "completion", Short: "Generate shell completion scripts (bash, zsh, fish)"},
 		{Name: "update", Short: "Check for a newer release and print upgrade instructions"},
 		configCommand,
+		hooksCommand,
 	},
 }
 
@@ -150,9 +148,6 @@ Databricks-OpenCode Flags:
   --port int                Local proxy port (default: 49156, saved for future sessions)
   --headless            Start proxy without launching opencode (for IDE extensions)
   --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables; use e.g. 30s, 5m, 1h)
-  --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
-  --uninstall-hooks     Remove databricks-opencode plugin from opencode config
-  --headless-ensure     Start proxy if not running (called by opencode plugin at init)
   --no-update-check            Skip the automatic update check on startup
   --version             Print version and exit
   --help, -h            Show this help message
@@ -165,6 +160,12 @@ Subcommands:
                                                                  (replaces the removed
                                                                  root diagnostic flag)
                                Run 'databricks-opencode config --help' for details.
+  hooks <subcommand>           OpenCode plugin lifecycle.
+                                 hooks install                   Install opencode plugin
+                                 hooks uninstall                 Remove opencode plugin
+                                 hooks session-start             Plugin-invoked internal
+                                                                 (replaces removed root flag)
+                               Run 'databricks-opencode hooks --help' for details.
 
 ────────────────────────────────────────────────────────────────────────────────
 OpenCode CLI Options:
@@ -218,4 +219,150 @@ Example output:
     ANTHROPIC_BASE_URL: https://adb-.../ai-gateway/anthropic
     Auth Token:         **** (redacted)
     OpenCode binary:    /usr/local/bin/opencode
+`
+
+// hooksCommand declares the `hooks` subcommand tree introduced in #83.
+// Consolidates the 3 hooks-lifecycle root flags (--install-hooks,
+// --uninstall-hooks, --headless-ensure) under a discoverable subcommand.
+// install/uninstall manage the opencode plugin file at
+// <opencode-config-dir>/plugins/databricks-proxy/index.js;
+// session-start is the plugin-invoked refcount-free proxy lifecycle internal
+// (formerly --headless-ensure).
+//
+// Tree shape:
+//
+//	hooks
+//	├── install        [--profile P] [--port N]
+//	├── uninstall
+//	└── session-start  [--port N]   (plugin-invoked internal)
+//
+// Unlike databricks-claude, OpenCode has no SessionEnd hook event — the
+// proxy shuts itself down on its idle timeout. So there is no
+// `hooks session-end` counterpart.
+//
+// The hook-install logic in hooks.go (installHooks/uninstallHooks/
+// headlessEnsure) is unchanged; this dispatcher is purely a surface reshape
+// so the lifecycle is discoverable and the internal entrypoint stops
+// polluting the user-facing root flag namespace. The plugin JS file emitted
+// by installHooks is updated to invoke `hooks session-start` instead of
+// `--headless-ensure` — users with stale plugins from before #83 must
+// re-run `hooks install` to refresh the file.
+var hooksCommand = cmd.Command{
+	Name:  "hooks",
+	Short: "OpenCode plugin lifecycle: install/uninstall + session-start internal",
+	Long:  hooksHelpTemplate,
+	Subcommands: []cmd.Command{
+		{
+			Name:  "install",
+			Short: "Install the opencode plugin for automatic proxy lifecycle",
+			Long:  hooksInstallHelpTemplate,
+			Flags: []cmd.FlagDef{
+				{Name: "profile", Description: "Databricks CLI profile to persist (default: DEFAULT)", TakesArg: true, Completer: "__databricks_profiles", StateKey: "profile", MDMKey: "databricksProfile", Default: "DEFAULT"},
+				{Name: "port", Description: "Proxy listen port to persist (default: 49156)", TakesArg: true, StateKey: "port", Default: "49156"},
+				{Name: "help", Short: "h", Description: "Show help message"},
+			},
+		},
+		{
+			Name:  "uninstall",
+			Short: "Remove the databricks-opencode plugin from opencode",
+			Long:  hooksUninstallHelpTemplate,
+			Flags: []cmd.FlagDef{
+				{Name: "help", Short: "h", Description: "Show help message"},
+			},
+		},
+		{
+			Name:  "session-start",
+			Short: "Start proxy if not running (invoked by the opencode plugin — internal)",
+			Long:  hooksSessionStartHelpTemplate,
+			Flags: []cmd.FlagDef{
+				{Name: "port", Description: "Proxy listen port (default: saved state > 49156)", TakesArg: true, StateKey: "port", Default: "49156"},
+				{Name: "help", Short: "h", Description: "Show help message"},
+			},
+		},
+	},
+}
+
+const hooksHelpTemplate = `Usage: databricks-opencode hooks <subcommand> [flags]
+
+OpenCode plugin lifecycle. Installs an opencode plugin at
+<opencode-config-dir>/plugins/databricks-proxy/index.js that spins the
+local proxy up on session start — making 'databricks-opencode' auto-launch
+with every opencode session without a long-lived daemon.
+
+Subcommands:
+  install        Write the opencode plugin and register it in
+                 opencode.json. Idempotent — safe to re-run after
+                 upgrades.
+  uninstall      Remove the databricks-opencode plugin file and config
+                 entry. Tolerates "not installed".
+  session-start  Plugin-invoked internal: start the proxy if it isn't
+                 already running. Called by the opencode plugin written
+                 by 'hooks install'. Not intended to be invoked directly.
+
+Run 'databricks-opencode hooks <subcommand> --help' for per-subcommand flags.
+
+Examples:
+  # First-time install on a developer machine:
+  databricks-opencode hooks install
+
+  # Remove plugin (e.g. when switching to a different proxy management mode):
+  databricks-opencode hooks uninstall
+
+Migration note (v0.8.0): the legacy root flags --install-hooks,
+--uninstall-hooks, and --headless-ensure have been removed in favour of
+this subcommand. Users with stale plugins from before v0.8.0 must re-run
+'hooks install' so the plugin invokes 'hooks session-start' rather than
+the removed '--headless-ensure' flag.
+
+Exit codes:
+  0   success
+  1   write/discovery failure
+  2   missing or unknown subcommand
+`
+
+const hooksInstallHelpTemplate = `Usage: databricks-opencode hooks install [flags]
+
+Install the opencode plugin so every OpenCode session auto-starts the
+local proxy on session init. Writes the plugin to:
+  <opencode-config-dir>/plugins/databricks-proxy/index.js
+and registers it in opencode.json. Idempotent — safe to re-run after
+upgrades or after switching install methods (Homebrew ↔ go install).
+
+Generated plugin invocation:
+  $` + "`" + `<wrapper> hooks session-start` + "`" + `
+
+Flags:
+  --profile string   Databricks CLI profile to persist (default: DEFAULT)
+  --port int         Proxy listen port to persist (default: 49156)
+  --help, -h         Show this help message
+
+Examples:
+  # First-time install on a developer machine:
+  databricks-opencode hooks install
+
+  # Re-install after upgrade (idempotent):
+  databricks-opencode hooks install
+`
+
+const hooksUninstallHelpTemplate = `Usage: databricks-opencode hooks uninstall
+
+Remove the databricks-opencode plugin file and its entry from
+opencode.json. Tolerates "not installed" — safe to run when no plugin is
+present. Other plugins in your opencode plugins directory are untouched.
+
+Flags:
+  --help, -h   Show this help message
+`
+
+const hooksSessionStartHelpTemplate = `Usage: databricks-opencode hooks session-start [flags]
+
+Plugin-invoked internal: start the local proxy if not already running.
+Called by the opencode plugin file written by 'hooks install'. Not
+intended to be invoked directly by end users.
+
+Replaces the legacy --headless-ensure root flag.
+
+Flags:
+  --port int   Proxy listen port (default: saved state > 49156)
+  --help, -h   Show this help message
 `
