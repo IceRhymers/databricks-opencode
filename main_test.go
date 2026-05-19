@@ -591,11 +591,41 @@ func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 	out := captureStdout(func() {
 		handleHelp("")
 	})
-	// Note: --print-env removed in #82 (replaced by `config show`); not in this list.
-	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--headless", "--idle-timeout", "--install-hooks", "--uninstall-hooks", "--headless-ensure", "--no-update-check"}
+	// Note: --print-env removed in #82 (replaced by `config show`); the
+	// hooks lifecycle flags --install-hooks, --uninstall-hooks, and
+	// --headless-ensure removed in #83 (replaced by the `hooks` subcommand
+	// — see TestHandleHelp_HookFlagsRemoved). Neither set is listed here.
+	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--headless", "--idle-timeout", "--no-update-check"}
 	for _, flag := range flags {
 		if !strings.Contains(out, flag) {
 			t.Errorf("expected help output to contain flag %q, got:\n%s", flag, out)
+		}
+	}
+}
+
+// TestHandleHelp_HookFlagsRemoved verifies that --install-hooks /
+// --uninstall-hooks / --headless-ensure no longer appear in the help body
+// (#83 replaced them with the `hooks` subcommand).
+func TestHandleHelp_HookFlagsRemoved(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	for _, removed := range []string{"--install-hooks", "--uninstall-hooks", "--headless-ensure"} {
+		if strings.Contains(out, removed) {
+			t.Errorf("help output should not mention %q (replaced by `hooks` subcommand), got:\n%s", removed, out)
+		}
+	}
+}
+
+// TestHandleHelp_ContainsHooksSubcommand verifies that the new `hooks`
+// subcommand surfaces in the help body so users can discover it.
+func TestHandleHelp_ContainsHooksSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	for _, want := range []string{"hooks install", "hooks uninstall", "hooks session-start"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected help output to mention %q, got:\n%s", want, out)
 		}
 	}
 }

@@ -73,10 +73,10 @@ make build
 | `--tls-key` | Path to TLS private key file (requires --tls-cert) |
 | `--headless` | Start proxy without launching opencode (for IDE extensions or hooks) |
 | `--idle-timeout` | Idle timeout for headless mode (default 30m; `0` disables; bare number = minutes) |
-| `--install-hooks` | Install opencode plugin for automatic proxy lifecycle |
-| `--uninstall-hooks` | Remove databricks-opencode plugin from opencode |
 | `--version` | Print version and exit |
 | `--help`, `-h` | Show help message |
+
+> **Breaking change (v0.8.0):** `--install-hooks`, `--uninstall-hooks`, and `--headless-ensure` have been removed in favour of the [`hooks` subcommand](#hooks-subcommand) below.
 
 ## `config` Subcommand
 
@@ -108,19 +108,25 @@ databricks-opencode config show --profile my-workspace
 
 No shell alias needed — `databricks-opencode` is a standalone binary.
 
-## Session Hooks (automatic proxy lifecycle)
+## `hooks` Subcommand
 
-Install hooks so every OpenCode session auto-starts the proxy on startup — no manual `--headless` needed.
+Install hooks so every OpenCode session auto-starts the proxy on startup — no manual `--headless` needed. The `hooks` subcommand consolidates the lifecycle commands that previously lived behind root flags.
+
+| Subcommand | Description |
+|------------|-------------|
+| `hooks install` | Write the opencode plugin and register it in `opencode.json`. Idempotent. |
+| `hooks uninstall` | Remove the databricks-opencode plugin. Tolerates "not installed". |
+| `hooks session-start` | Plugin-invoked internal — start the proxy if not running (replaces the removed `--headless-ensure` root flag). |
 
 > **First-time setup:** Run `databricks-opencode` at least once before installing hooks. This writes `~/.config/opencode/opencode.json` so the proxy is used for all OpenCode sessions.
 
 ### Install
 
 ```bash
-databricks-opencode --install-hooks
+databricks-opencode hooks install
 ```
 
-This writes an OpenCode plugin to `~/.config/opencode/plugins/databricks-proxy/index.js` that runs `databricks-opencode --headless-ensure` at session startup.
+This writes an OpenCode plugin to `~/.config/opencode/plugins/databricks-proxy/index.js` that runs `databricks-opencode hooks session-start` at session startup.
 
 ### Shutdown
 
@@ -129,15 +135,17 @@ Unlike Claude Code, OpenCode does not have a session-end hook event. The proxy s
 ### Uninstall
 
 ```bash
-databricks-opencode --uninstall-hooks
+databricks-opencode hooks uninstall
 ```
 
 Removes only the databricks-opencode plugin file. Other plugins in your opencode plugins directory are untouched.
 
 ### Notes
 
-- Safe to rerun `--install-hooks` after upgrades — the plugin file is overwritten, not duplicated.
+- Safe to rerun `hooks install` after upgrades — the plugin file is overwritten, not duplicated.
 - Custom port settings persist automatically via the state file (`~/.config/opencode/.databricks-opencode.json`).
+
+> **Migration (v0.8.0):** The legacy root flags `--install-hooks`, `--uninstall-hooks`, and `--headless-ensure` have been removed. **If you have a stale plugin from before v0.8.0**, its session-start invocation still references `--headless-ensure` and will fail at session start. Re-run `databricks-opencode hooks install` once after upgrading to refresh the plugin file. There is no automatic detection — the wrapper does not rewrite plugin files behind your back.
 
 ## Shell Tab Completions
 

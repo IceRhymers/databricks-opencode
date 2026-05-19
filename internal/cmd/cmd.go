@@ -158,6 +158,25 @@ func (c Command) CompletionFlags() []completion.FlagDef {
 	return out
 }
 
+// CompletionSubcommands returns the immediate children as
+// pkg/completion.SubcommandDef. The conversion is RECURSIVE: each child
+// carries its own Flags and Subcommands so the shell-completion generator
+// can offer nested completion (e.g. `hooks <TAB>` → install/uninstall/
+// session-start). Flags include each child's Persistent ++ Flags so
+// inherited flags surface alongside the child's own.
+func (c Command) CompletionSubcommands() []completion.SubcommandDef {
+	out := make([]completion.SubcommandDef, len(c.Subcommands))
+	for i, s := range c.Subcommands {
+		out[i] = completion.SubcommandDef{
+			Name:        s.Name,
+			Description: s.Short,
+			Flags:       s.CompletionFlags(),
+			Subcommands: s.CompletionSubcommands(),
+		}
+	}
+	return out
+}
+
 // KnownFlags returns the set of "--flag" names this command's parser
 // recognises. Includes Persistent ++ Flags. Does NOT walk into
 // Subcommands — each child command is parsed by its own dispatcher and

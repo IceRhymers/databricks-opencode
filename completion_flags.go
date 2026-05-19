@@ -19,3 +19,13 @@ var flagDefs = func() []completion.FlagDef {
 // Derived from rootCommand so it can never drift from the tree or the
 // completion script.
 var knownFlags = rootCommand.KnownFlags()
+
+// knownSubcommands is the set of top-level subcommands surfaced as
+// position-1 completions when the user types `databricks-opencode <TAB>`.
+// Derived recursively from the root command-tree so nested subcommands
+// (e.g. `hooks install`, `config show`) get nested completion automatically.
+// #83 wires this in so the new `hooks` subcommand and its install /
+// uninstall / session-start children complete out of the box; the same
+// derivation also surfaces `config show` from #82 which had been silently
+// invisible to the completion script.
+var knownSubcommands = rootCommand.CompletionSubcommands()
