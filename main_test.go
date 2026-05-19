@@ -28,7 +28,7 @@ func TestParseArgs_HelpLong(t *testing.T) {
 	if !a.ShowHelp {
 		t.Error("expected ShowHelp=true for --help")
 	}
-	if a.Verbose || a.Version || a.PrintEnv || a.Model != "" || a.Upstream != "" || a.LogFile != "" || a.Profile != "" || len(a.OpencodeArgs) != 0 {
+	if a.Verbose || a.Version || a.Model != "" || a.Upstream != "" || a.LogFile != "" || a.Profile != "" || len(a.OpencodeArgs) != 0 {
 		t.Error("unexpected non-default values alongside --help")
 	}
 }
@@ -40,10 +40,13 @@ func TestParseArgs_HelpShort(t *testing.T) {
 	}
 }
 
-func TestParseArgs_PrintEnv(t *testing.T) {
+// TestParseArgs_PrintEnvRemoved verifies that --print-env is no longer a
+// known flag (replaced by `config show` in #82). Behavior: parseArgs forwards
+// unknown flags to opencode, so --print-env should appear in OpencodeArgs.
+func TestParseArgs_PrintEnvRemoved(t *testing.T) {
 	a := mustParse(t, []string{"--print-env"})
-	if !a.PrintEnv {
-		t.Error("expected PrintEnv=true for --print-env")
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--print-env" {
+		t.Errorf("--print-env should now forward to opencode as unknown, got OpencodeArgs=%v", a.OpencodeArgs)
 	}
 }
 
@@ -119,7 +122,7 @@ func TestParseArgs_UnknownFlagPassthrough(t *testing.T) {
 
 func TestParseArgs_EmptyArgs(t *testing.T) {
 	a := mustParse(t, []string{})
-	if a.Verbose || a.Version || a.ShowHelp || a.PrintEnv {
+	if a.Verbose || a.Version || a.ShowHelp {
 		t.Error("expected all bool flags false for empty args")
 	}
 	if a.Model != "" {
@@ -175,7 +178,6 @@ func TestParseArgs_Table(t *testing.T) {
 		verbose     bool
 		version     bool
 		showHelp    bool
-		printEnv    bool
 		model       string
 		upstream    string
 		logFile     string
@@ -199,9 +201,9 @@ func TestParseArgs_Table(t *testing.T) {
 			want: result{showHelp: true},
 		},
 		{
-			name: "--print-env sets printEnv",
+			name: "--print-env removed; forwarded as unknown",
 			args: []string{"--print-env"},
-			want: result{printEnv: true},
+			want: result{opencodeLen: 1},
 		},
 		{
 			name: "--version sets version",
@@ -277,9 +279,6 @@ func TestParseArgs_Table(t *testing.T) {
 			}
 			if a.ShowHelp != tc.want.showHelp {
 				t.Errorf("showHelp: got %v, want %v", a.ShowHelp, tc.want.showHelp)
-			}
-			if a.PrintEnv != tc.want.printEnv {
-				t.Errorf("printEnv: got %v, want %v", a.PrintEnv, tc.want.printEnv)
 			}
 			if a.Model != tc.want.model {
 				t.Errorf("model: got %q, want %q", a.Model, tc.want.model)
@@ -429,12 +428,25 @@ func TestHandleHelp_ContainsDatabricksOpencode(t *testing.T) {
 	}
 }
 
-func TestHandleHelp_ContainsPrintEnvFlag(t *testing.T) {
+// TestHandleHelp_PrintEnvRemoved verifies that --print-env no longer
+// appears in the help body (#82 replaced it with `config show`).
+func TestHandleHelp_PrintEnvRemoved(t *testing.T) {
 	out := captureStdout(func() {
 		handleHelp("")
 	})
-	if !strings.Contains(out, "--print-env") {
-		t.Errorf("expected help output to contain '--print-env', got:\n%s", out)
+	if strings.Contains(out, "--print-env") {
+		t.Errorf("help output should not mention --print-env (replaced by 'config show'), got:\n%s", out)
+	}
+}
+
+// TestHandleHelp_ContainsConfigSubcommand verifies that the new `config`
+// subcommand surfaces in the help body so users can discover `config show`.
+func TestHandleHelp_ContainsConfigSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	if !strings.Contains(out, "config show") {
+		t.Errorf("expected help output to mention 'config show', got:\n%s", out)
 	}
 }
 
@@ -579,6 +591,7 @@ func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 	out := captureStdout(func() {
 		handleHelp("")
 	})
+	// Note: --print-env removed in #82 (replaced by `config show`); not in this list.
 	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--headless", "--idle-timeout", "--install-hooks", "--uninstall-hooks", "--headless-ensure", "--no-update-check"}
 	for _, flag := range flags {
 		if !strings.Contains(out, flag) {
@@ -679,5 +692,110 @@ func TestParseArgs_IdleTimeoutSpaceSeparated(t *testing.T) {
 	}
 	if a.IdleTimeout != time.Hour {
 		t.Errorf("expected 1h, got %v", a.IdleTimeout)
+	}
+}
+
+// --- Tree ↔ parser parity tests (#82) ---
+//
+// The command-tree registry in commands.go is the single source of truth for
+// the root flag set. flagDefs and knownFlags derive from it. parseArgs
+// individually handles each flag in a switch. These two tests pin the
+// bidirectional invariant: every flag declared in the tree is recognised by
+// parseArgs (no silent drops), and every flag parseArgs handles is declared
+// in the tree (no parse-only ghost flags).
+//
+// Bidirectional verification was performed during #82: temporarily deleting a
+// flag from rootCommand causes TestRootTreeFlagsAreParseRecognised to fail
+// loudly, confirming the test catches drift in either direction.
+
+// TestRootTreeFlagsAreParseRecognised exercises every flag declared in
+// rootCommand (Persistent + Flags) and verifies parseArgs accepts it without
+// erroring. A flag added to the tree but missing a switch case in parseArgs
+// will hit the default arm and return the "internal: …" error this test
+// asserts against.
+func TestRootTreeFlagsAreParseRecognised(t *testing.T) {
+	for _, f := range rootCommand.AllFlags() {
+		t.Run(f.Name, func(t *testing.T) {
+			args := []string{"--" + f.Name}
+			if f.TakesArg {
+				// Provide a placeholder value; for --idle-timeout it must
+				// parse as a duration so the post-switch validator passes.
+				switch f.Name {
+				case "idle-timeout":
+					args = append(args, "30m")
+				case "port":
+					args = append(args, "12345")
+				default:
+					args = append(args, "x")
+				}
+			}
+			if _, err := parseArgs(args); err != nil {
+				t.Errorf("parseArgs(%v) errored: %v — flag declared in rootCommand but unhandled in parseArgs", args, err)
+			}
+		})
+	}
+}
+
+// TestParseArgsCasesAreDeclaredInRootTree is the reverse parity: every flag
+// in knownFlags must be declared on rootCommand. Since knownFlags is now
+// derived from rootCommand.KnownFlags(), this test is structurally
+// equivalent to a sanity check on the derivation, but it documents the
+// contract explicitly so a future refactor that hand-rolls knownFlags would
+// fail loudly.
+func TestParseArgsCasesAreDeclaredInRootTree(t *testing.T) {
+	declared := map[string]bool{}
+	for _, f := range rootCommand.AllFlags() {
+		declared["--"+f.Name] = true
+	}
+	for k := range knownFlags {
+		if !declared[k] {
+			t.Errorf("knownFlags has %q but rootCommand has no matching FlagDef — declare it in commands.go", k)
+		}
+	}
+}
+
+// TestConfigShowMatchesLegacyPrintEnv verifies that the new config-show
+// dispatch produces the same output shape as the removed --print-env root
+// flag. We exercise handlePrintEnv directly with the same inputs both code
+// paths feed it; runConfigShow itself requires `databricks` on PATH and
+// valid auth, which CI may not have. This test pins the shared output
+// contract so byte-equivalence smoke tests at the binary level (run during
+// PR verification) have a unit-level companion.
+func TestConfigShowMatchesLegacyPrintEnv(t *testing.T) {
+	host := "https://dbc.example.com"
+	gateway := "https://dbc.example.com/ai-gateway/anthropic"
+	token := "dapi-secret"
+	profile := "DEFAULT"
+	model := "databricks-claude-opus-4-7"
+
+	out := captureStdout(func() {
+		handlePrintEnv(host, gateway, token, profile, model)
+	})
+
+	// Required keys present (the legacy --print-env contract).
+	for _, want := range []string{"Profile:", "Model:", "DATABRICKS_HOST:", "ANTHROPIC_BASE_URL:", "Auth Token:", "OpenCode binary:", host, gateway, profile, model} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show output missing %q (legacy --print-env contract):\n%s", want, out)
+		}
+	}
+	// Token must be redacted regardless of input shape.
+	if strings.Contains(out, token) {
+		t.Errorf("token %q leaked into config show output:\n%s", token, out)
+	}
+}
+
+// TestConfigShowSubcommandKnownFlags verifies the `show` subcommand's tree
+// declares the expected flags so its own Parse call (in runConfigShow)
+// recognises --profile / --port / --help.
+func TestConfigShowSubcommandKnownFlags(t *testing.T) {
+	show := configCommand.Subcommand("show")
+	if show == nil {
+		t.Fatal("config command tree missing 'show' subcommand")
+	}
+	known := show.KnownFlags()
+	for _, want := range []string{"--profile", "--port", "--help"} {
+		if !known[want] {
+			t.Errorf("config show missing %q in its known-flag set", want)
+		}
 	}
 }

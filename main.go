@@ -24,6 +24,7 @@ import (
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
 	"github.com/IceRhymers/databricks-claude/pkg/refcount"
 	"github.com/IceRhymers/databricks-claude/pkg/updater"
+	"github.com/IceRhymers/databricks-opencode/internal/cmd"
 	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
@@ -36,6 +37,15 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "completion" {
 		completion.Run(os.Args[2:], flagDefs, "databricks-opencode")
 		os.Exit(0)
+	}
+
+	// `config` subcommand — persistent-config editor. Today this is just
+	// `config show` (the lifted --print-env diagnostic); future sub-issues
+	// may grow this tree. Routed before parseArgs so positional dispatch
+	// doesn't have to fight with the transparent-passthrough behaviour.
+	if len(os.Args) >= 2 && os.Args[1] == "config" {
+		runConfigCommand(os.Args[2:])
+		return
 	}
 
 	// update — force-check for a newer release and print instructions.
@@ -74,7 +84,6 @@ func main() {
 	verbose := a.Verbose
 	version := a.Version
 	showHelp := a.ShowHelp
-	printEnv := a.PrintEnv
 	model := a.Model
 	upstream := a.Upstream
 	logFile := a.LogFile
@@ -242,8 +251,7 @@ func main() {
 
 	// --- Seed token cache ---
 	tp := NewTokenProvider("", profile)
-	initialToken, err := tp.Token(context.Background())
-	if err != nil {
+	if _, err := tp.Token(context.Background()); err != nil {
 		log.Fatalf("databricks-opencode: failed to fetch initial token: %v", err)
 	}
 
@@ -259,12 +267,6 @@ func main() {
 		gatewayURL = ConstructGatewayURL(host)
 	}
 	log.Printf("databricks-opencode: gateway URL: %s", gatewayURL)
-
-	// --- Print env and exit if requested ---
-	if printEnv {
-		handlePrintEnv(host, gatewayURL, initialToken, profile, model)
-		os.Exit(0)
-	}
 
 	// Verify opencode is on PATH before starting proxy (skip in headless mode).
 	if !headless {
@@ -414,7 +416,6 @@ type Args struct {
 	Verbose            bool
 	Version            bool
 	ShowHelp           bool
-	PrintEnv           bool
 	Model              string
 	Upstream           string
 	LogFile            string
@@ -534,8 +535,6 @@ func parseArgs(args []string) (*Args, error) {
 					a.Version = true
 				case "--help":
 					a.ShowHelp = true
-				case "--print-env":
-					a.PrintEnv = true
 				case "--headless":
 					a.Headless = true
 				case "--idle-timeout":
@@ -559,6 +558,8 @@ func parseArgs(args []string) (*Args, error) {
 					a.HeadlessEnsureFlag = true
 				case "--no-update-check":
 					a.NoUpdateCheck = true
+				default:
+					return nil, fmt.Errorf("internal: %s is a known flag but parseArgs has no case for it", name)
 				}
 				i++
 				continue
@@ -594,42 +595,10 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, doneCh chan str
 }
 
 // handleHelp prints the databricks-opencode help section, then execs opencode --help.
+// The first half is rendered from the rootCommand registry (commands.go) so
+// the help body, flag set, and completion scripts share one source of truth.
 func handleHelp(upstreamBinary string) {
-	fmt.Printf(`databricks-opencode v%s — Databricks AI Gateway wrapper for OpenCode CLI
-
-Patches the opencode config (opencode.json) and runs a local proxy so the OpenCode CLI
-authenticates through a Databricks AI Gateway endpoint with live token refresh.
-
-Usage:
-  databricks-opencode [databricks-opencode flags] [opencode flags] [opencode args]
-
-Databricks-OpenCode Flags:
-  --profile string      Databricks CLI profile (saved for future sessions; default: env or "DEFAULT")
-  --upstream string     Override the AI Gateway URL (default: auto-discovered)
-  --model string        Model to use (default: "databricks-claude-opus-4-7")
-  --print-env           Print resolved configuration and exit (token redacted)
-  --verbose, -v         Enable debug logging to stderr
-  --log-file string     Write debug logs to a file (combinable with --verbose)
-  --proxy-api-key string    Require this API key on all proxy requests (default: disabled)
-  --tls-cert string         Path to TLS certificate file (requires --tls-key)
-  --tls-key string          Path to TLS private key file (requires --tls-cert)
-  --port int                Local proxy port (default: 49156, saved for future sessions)
-  --headless            Start proxy without launching opencode (for IDE extensions)
-  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables; use e.g. 30s, 5m, 1h)
-  --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
-  --uninstall-hooks     Remove databricks-opencode plugin from opencode config
-  --headless-ensure     Start proxy if not running (called by opencode plugin at init)
-  --no-update-check            Skip the automatic update check on startup
-  --version             Print version and exit
-  --help, -h            Show this help message
-
-Subcommands:
-  completion <shell>           Generate shell completions (bash, zsh, fish)
-  update                       Check for a newer release and print upgrade instructions
-
-────────────────────────────────────────────────────────────────────────────────
-OpenCode CLI Options:
-`, Version)
+	_ = cmd.Render(os.Stdout, rootCommand, map[string]string{"Version": Version})
 
 	opencodeBin := upstreamBinary
 	if opencodeBin == "" {

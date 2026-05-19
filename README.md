@@ -66,7 +66,6 @@ make build
 | `--upstream` | Override the AI Gateway URL (default: auto-discovered) |
 | `--model` | Model to use (saved for future sessions; default: "databricks-claude-opus-4-7") |
 | `--port` | Proxy listen port (saved for future sessions; default: 49156) |
-| `--print-env` | Print resolved configuration and exit (token redacted) |
 | `--verbose`, `-v` | Enable debug logging to stderr |
 | `--log-file` | Write debug logs to a file (combinable with --verbose) |
 | `--proxy-api-key` | Require this API key on all proxy requests (default: disabled) |
@@ -78,6 +77,24 @@ make build
 | `--uninstall-hooks` | Remove databricks-opencode plugin from opencode |
 | `--version` | Print version and exit |
 | `--help`, `-h` | Show help message |
+
+## `config` Subcommand
+
+Diagnostic and persistent-config commands live under `databricks-opencode config <sub>`.
+
+| Subcommand | Description |
+|------------|-------------|
+| `config show` | Print the resolved configuration (profile, host, gateway URL, model, opencode binary) with the auth token redacted. Read-only — replaces the removed `--print-env` root flag. |
+
+```bash
+# Replaces the legacy `databricks-opencode --print-env`:
+databricks-opencode config show
+
+# Override the profile for the dump (does not persist):
+databricks-opencode config show --profile my-workspace
+```
+
+> **Breaking change (v0.8.0):** the `--print-env` root flag has been removed. Use `config show` instead.
 
 ## How it works
 
