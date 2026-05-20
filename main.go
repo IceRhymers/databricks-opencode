@@ -24,6 +24,7 @@ import (
 	"github.com/IceRhymers/databricks-claude/pkg/proxy"
 	"github.com/IceRhymers/databricks-claude/pkg/refcount"
 	"github.com/IceRhymers/databricks-claude/pkg/updater"
+	"github.com/IceRhymers/databricks-opencode/internal/cmd"
 	"github.com/IceRhymers/databricks-opencode/pkg/jsonconfig"
 )
 
@@ -34,8 +35,36 @@ func main() {
 	// completion <shell> — must be the very first check, before any flag parsing,
 	// auth, or state loading. Safe to call in the Homebrew install sandbox.
 	if len(os.Args) >= 2 && os.Args[1] == "completion" {
-		completion.Run(os.Args[2:], flagDefs, "databricks-opencode")
+		completion.Run(os.Args[2:], flagDefs, "databricks-opencode", knownSubcommands...)
 		os.Exit(0)
+	}
+
+	// `config` subcommand — persistent-config editor. Today this is just
+	// `config show` (the lifted --print-env diagnostic); future sub-issues
+	// may grow this tree. Routed before parseArgs so positional dispatch
+	// doesn't have to fight with the transparent-passthrough behaviour.
+	if len(os.Args) >= 2 && os.Args[1] == "config" {
+		runConfigCommand(os.Args[2:])
+		return
+	}
+
+	// `hooks` subcommand — opencode plugin lifecycle. Replaces the removed
+	// --install-hooks / --uninstall-hooks / --headless-ensure root flags.
+	// Routed before parseArgs so positional dispatch doesn't have to fight
+	// with the transparent-passthrough behaviour.
+	if len(os.Args) >= 2 && os.Args[1] == "hooks" {
+		runHooksCommand(os.Args[2:])
+		return
+	}
+
+	// `serve` subcommand — start the proxy without launching opencode.
+	// Replaces the removed --headless / --idle-timeout root flags. Routed
+	// before parseArgs so positional dispatch doesn't fight the
+	// transparent-passthrough behaviour. The dispatcher in serve_cmd.go
+	// parses its own flags then calls runOpencode with Headless=true.
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		runServeCommand(os.Args[2:])
+		return
 	}
 
 	// update — force-check for a newer release and print instructions.
@@ -71,10 +100,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	runOpencode(a)
+}
+
+// runOpencode is the post-parse body of the wrapper-mode flow. Lifted out of
+// main() in #84 so the `serve` dispatcher can synthesise an *Args (with
+// Headless=true and IdleTimeout populated from `serve --idle-timeout`) and
+// reuse the same proxy-startup + config-patch + opencode-launch logic.
+//
+// Wrapper invocation: main() builds *a from os.Args via parseArgs, leaving
+// Headless=false and IdleTimeout=0 — runOpencode then launches opencode as a
+// child after starting the proxy. Serve invocation: serve_cmd.runServeCommand
+// builds *a from the post-`serve` arg list, sets Headless=true plus the
+// resolved IdleTimeout, and runOpencode skips the opencode child launch and
+// blocks on the lifecycle wrapper instead. The two paths share everything
+// else (port binding, EnsureConfig, refcount, takeover, etc.) so the AC
+// "byte-identical behaviour to --headless" holds by construction.
+func runOpencode(a *Args) {
 	verbose := a.Verbose
 	version := a.Version
 	showHelp := a.ShowHelp
-	printEnv := a.PrintEnv
 	model := a.Model
 	upstream := a.Upstream
 	logFile := a.LogFile
@@ -85,9 +130,6 @@ func main() {
 	portFlag := a.Port
 	headless := a.Headless
 	idleTimeout := a.IdleTimeout
-	installHooksFlag := a.InstallHooksFlag
-	uninstallHooksFlag := a.UninstallHooksFlag
-	headlessEnsureFlag := a.HeadlessEnsureFlag
 	noUpdateCheck := a.NoUpdateCheck
 	opencodeArgs := a.OpencodeArgs
 
@@ -98,33 +140,6 @@ func main() {
 
 	if version {
 		fmt.Printf("databricks-opencode %s\n", Version)
-		os.Exit(0)
-	}
-
-	// --- Hook lifecycle commands (handled before auth/config setup) ---
-	if installHooksFlag || uninstallHooksFlag {
-		if installHooksFlag {
-			if err := installHooks(); err != nil {
-				log.Fatalf("databricks-opencode: --install-hooks: %v", err)
-			}
-			hookDir, _ := opencodeConfigDir()
-			fmt.Fprintf(os.Stderr, "databricks-opencode: hooks installed — opencode plugin written to %s\n", filepath.Join(hookDir, "plugins", "databricks-proxy", "index.js"))
-		} else {
-			if err := uninstallHooks(); err != nil {
-				log.Fatalf("databricks-opencode: --uninstall-hooks: %v", err)
-			}
-			fmt.Fprintln(os.Stderr, "databricks-opencode: hooks removed from opencode config")
-		}
-		os.Exit(0)
-	}
-
-	// --- Headless hook command (called by the opencode plugin, not by end users) ---
-	if headlessEnsureFlag {
-		state := loadState()
-		port := resolvePort(0, state)
-		if err := headlessEnsure(port); err != nil {
-			log.Fatalf("databricks-opencode: headless ensure failed: %v", err)
-		}
 		os.Exit(0)
 	}
 
@@ -242,8 +257,7 @@ func main() {
 
 	// --- Seed token cache ---
 	tp := NewTokenProvider("", profile)
-	initialToken, err := tp.Token(context.Background())
-	if err != nil {
+	if _, err := tp.Token(context.Background()); err != nil {
 		log.Fatalf("databricks-opencode: failed to fetch initial token: %v", err)
 	}
 
@@ -259,12 +273,6 @@ func main() {
 		gatewayURL = ConstructGatewayURL(host)
 	}
 	log.Printf("databricks-opencode: gateway URL: %s", gatewayURL)
-
-	// --- Print env and exit if requested ---
-	if printEnv {
-		handlePrintEnv(host, gatewayURL, initialToken, profile, model)
-		os.Exit(0)
-	}
 
 	// Verify opencode is on PATH before starting proxy (skip in headless mode).
 	if !headless {
@@ -410,33 +418,42 @@ func main() {
 }
 
 // Args holds all parsed databricks-opencode flags plus the residual opencode args.
+//
+// Headless and IdleTimeout are NOT populated by parseArgs as of #84 — the
+// `--headless` / `--idle-timeout` root flags were removed and replaced by the
+// `serve` subcommand. Both fields remain on the struct because runOpencode
+// reads them: the serve dispatcher (serve_cmd.go) synthesises an Args with
+// Headless=true and IdleTimeout populated from `serve --idle-timeout` before
+// calling runOpencode, so the post-parse logic stays single-sourced.
 type Args struct {
-	Verbose            bool
-	Version            bool
-	ShowHelp           bool
-	PrintEnv           bool
-	Model              string
-	Upstream           string
-	LogFile            string
-	Profile            string
-	ProxyAPIKey        string
-	TLSCert            string
-	TLSKey             string
-	Port               int
-	Headless           bool
-	IdleTimeout        time.Duration
-	InstallHooksFlag   bool
-	UninstallHooksFlag bool
-	HeadlessEnsureFlag bool
-	NoUpdateCheck      bool
-	OpencodeArgs       []string
+	Verbose       bool
+	Version       bool
+	ShowHelp      bool
+	Model         string
+	Upstream      string
+	LogFile       string
+	Profile       string
+	ProxyAPIKey   string
+	TLSCert       string
+	TLSKey        string
+	Port          int
+	Headless      bool          // populated only by the `serve` dispatcher
+	IdleTimeout   time.Duration // populated only by the `serve` dispatcher
+	NoUpdateCheck bool
+	OpencodeArgs  []string
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
+//
+// As of #84, --headless and --idle-timeout are NOT recognised at the root —
+// they live under the `serve` subcommand. parseArgs leaves Args.Headless
+// false and Args.IdleTimeout zero; the `serve` dispatcher in serve_cmd.go
+// populates them when invoking runOpencode. Anything that looks like
+// --headless / --idle-timeout at the root falls through to opencode (the
+// transparent-passthrough behaviour the wrapper applies to all unknown
+// flags).
 func parseArgs(args []string) (*Args, error) {
-	a := &Args{
-		IdleTimeout: 30 * time.Minute, // default
-	}
+	a := &Args{}
 
 	// knownFlags is defined at package level in completion_flags.go,
 	// derived from flagDefs so completions and parsing stay in sync.
@@ -534,31 +551,10 @@ func parseArgs(args []string) (*Args, error) {
 					a.Version = true
 				case "--help":
 					a.ShowHelp = true
-				case "--print-env":
-					a.PrintEnv = true
-				case "--headless":
-					a.Headless = true
-				case "--idle-timeout":
-					raw := value
-					if raw == "" && i+1 < len(args) {
-						i++
-						raw = args[i]
-					}
-					if raw != "" {
-						d, perr := time.ParseDuration(raw)
-						if perr != nil {
-							return nil, fmt.Errorf("--idle-timeout: %q is not a valid duration (use e.g. 30s, 5m, 1h)", raw)
-						}
-						a.IdleTimeout = d
-					}
-				case "--install-hooks":
-					a.InstallHooksFlag = true
-				case "--uninstall-hooks":
-					a.UninstallHooksFlag = true
-				case "--headless-ensure":
-					a.HeadlessEnsureFlag = true
 				case "--no-update-check":
 					a.NoUpdateCheck = true
+				default:
+					return nil, fmt.Errorf("internal: %s is a known flag but parseArgs has no case for it", name)
 				}
 				i++
 				continue
@@ -594,42 +590,10 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, doneCh chan str
 }
 
 // handleHelp prints the databricks-opencode help section, then execs opencode --help.
+// The first half is rendered from the rootCommand registry (commands.go) so
+// the help body, flag set, and completion scripts share one source of truth.
 func handleHelp(upstreamBinary string) {
-	fmt.Printf(`databricks-opencode v%s — Databricks AI Gateway wrapper for OpenCode CLI
-
-Patches the opencode config (opencode.json) and runs a local proxy so the OpenCode CLI
-authenticates through a Databricks AI Gateway endpoint with live token refresh.
-
-Usage:
-  databricks-opencode [databricks-opencode flags] [opencode flags] [opencode args]
-
-Databricks-OpenCode Flags:
-  --profile string      Databricks CLI profile (saved for future sessions; default: env or "DEFAULT")
-  --upstream string     Override the AI Gateway URL (default: auto-discovered)
-  --model string        Model to use (default: "databricks-claude-opus-4-7")
-  --print-env           Print resolved configuration and exit (token redacted)
-  --verbose, -v         Enable debug logging to stderr
-  --log-file string     Write debug logs to a file (combinable with --verbose)
-  --proxy-api-key string    Require this API key on all proxy requests (default: disabled)
-  --tls-cert string         Path to TLS certificate file (requires --tls-key)
-  --tls-key string          Path to TLS private key file (requires --tls-cert)
-  --port int                Local proxy port (default: 49156, saved for future sessions)
-  --headless            Start proxy without launching opencode (for IDE extensions)
-  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables; use e.g. 30s, 5m, 1h)
-  --install-hooks       Install opencode plugin hooks for automatic proxy lifecycle
-  --uninstall-hooks     Remove databricks-opencode plugin from opencode config
-  --headless-ensure     Start proxy if not running (called by opencode plugin at init)
-  --no-update-check            Skip the automatic update check on startup
-  --version             Print version and exit
-  --help, -h            Show this help message
-
-Subcommands:
-  completion <shell>           Generate shell completions (bash, zsh, fish)
-  update                       Check for a newer release and print upgrade instructions
-
-────────────────────────────────────────────────────────────────────────────────
-OpenCode CLI Options:
-`, Version)
+	_ = cmd.Render(os.Stdout, rootCommand, map[string]string{"Version": Version})
 
 	opencodeBin := upstreamBinary
 	if opencodeBin == "" {

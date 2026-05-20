@@ -12,10 +12,20 @@ import (
 
 // headlessEnsure checks whether the proxy is healthy on the given port.
 // If not, it starts a detached headless proxy and polls until ready (max 10s).
-// Called by the opencode plugin at init via: databricks-opencode --headless-ensure
+// Called by the opencode plugin at init via: databricks-opencode hooks session-start
 //
 // No refcount is acquired here — OpenCode has no exit hook to release it,
 // so the proxy relies on its idle timeout for shutdown instead.
+//
+// EnsureCommand pins the spawn prefix to []string{"serve"} so the detached
+// child reaches the new (#84) `serve` subcommand instead of the removed
+// --headless root flag — without this override, headless.buildArgs would
+// default to the legacy `--headless --port=N` shape, which after #84 falls
+// through to opencode (since --headless is no longer a known wrapper flag)
+// and the proxy never starts. AC: "Plugin-invoked hooks session-start
+// continues to bring the proxy up correctly — headlessEnsure-equivalent
+// path reuses the serve codepath internally, not the removed --headless
+// flag."
 func headlessEnsure(port int) error {
 	s := loadState()
 	scheme := "http"
@@ -29,6 +39,7 @@ func headlessEnsure(port int) error {
 		TLSKey:        s.TLSKey,
 		ManagedEnvVar: "DATABRICKS_OPENCODE_MANAGED",
 		LogPrefix:     "databricks-opencode",
+		EnsureCommand: []string{"serve"},
 	})
 }
 
@@ -42,15 +53,21 @@ func refcountPathForPort(port int) string {
 // Shutdown is handled by the proxy's idle timeout — OpenCode has no exit hook.
 // %s is replaced with the absolute path to the binary at install time so the
 // plugin works regardless of Bun's PATH (which may not include ~/go/bin or /opt/homebrew/bin).
+//
+// The wrapper is invoked via the `hooks session-start` subcommand (introduced
+// in #83). Users on a stale plugin from before #83 will see the old
+// `--headless-ensure` invocation fail at session start — they must re-run
+// `databricks-opencode hooks install` to refresh the plugin file.
 const pluginJSTemplate = `export const DatabricksProxy = async ({ $ }) => {
-  await $` + "`" + `%s --headless-ensure` + "`" + `;
+  await $` + "`" + `%s hooks session-start` + "`" + `;
   return {};
 };
 `
 
 // installHooks writes the JS plugin and registers it in opencode.json.
-// The absolute path to the binary is baked in at install time; rerun --install-hooks after
-// reinstalling via a different method (e.g. switching from go install to Homebrew).
+// The absolute path to the binary is baked in at install time; rerun
+// `hooks install` after reinstalling via a different method (e.g. switching
+// from go install to Homebrew).
 func installHooks() error {
 	self, err := os.Executable()
 	if err != nil {

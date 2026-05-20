@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // --- parseArgs tests ---
@@ -28,7 +27,7 @@ func TestParseArgs_HelpLong(t *testing.T) {
 	if !a.ShowHelp {
 		t.Error("expected ShowHelp=true for --help")
 	}
-	if a.Verbose || a.Version || a.PrintEnv || a.Model != "" || a.Upstream != "" || a.LogFile != "" || a.Profile != "" || len(a.OpencodeArgs) != 0 {
+	if a.Verbose || a.Version || a.Model != "" || a.Upstream != "" || a.LogFile != "" || a.Profile != "" || len(a.OpencodeArgs) != 0 {
 		t.Error("unexpected non-default values alongside --help")
 	}
 }
@@ -40,10 +39,13 @@ func TestParseArgs_HelpShort(t *testing.T) {
 	}
 }
 
-func TestParseArgs_PrintEnv(t *testing.T) {
+// TestParseArgs_PrintEnvRemoved verifies that --print-env is no longer a
+// known flag (replaced by `config show` in #82). Behavior: parseArgs forwards
+// unknown flags to opencode, so --print-env should appear in OpencodeArgs.
+func TestParseArgs_PrintEnvRemoved(t *testing.T) {
 	a := mustParse(t, []string{"--print-env"})
-	if !a.PrintEnv {
-		t.Error("expected PrintEnv=true for --print-env")
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--print-env" {
+		t.Errorf("--print-env should now forward to opencode as unknown, got OpencodeArgs=%v", a.OpencodeArgs)
 	}
 }
 
@@ -119,7 +121,7 @@ func TestParseArgs_UnknownFlagPassthrough(t *testing.T) {
 
 func TestParseArgs_EmptyArgs(t *testing.T) {
 	a := mustParse(t, []string{})
-	if a.Verbose || a.Version || a.ShowHelp || a.PrintEnv {
+	if a.Verbose || a.Version || a.ShowHelp {
 		t.Error("expected all bool flags false for empty args")
 	}
 	if a.Model != "" {
@@ -175,7 +177,6 @@ func TestParseArgs_Table(t *testing.T) {
 		verbose     bool
 		version     bool
 		showHelp    bool
-		printEnv    bool
 		model       string
 		upstream    string
 		logFile     string
@@ -199,9 +200,9 @@ func TestParseArgs_Table(t *testing.T) {
 			want: result{showHelp: true},
 		},
 		{
-			name: "--print-env sets printEnv",
+			name: "--print-env removed; forwarded as unknown",
 			args: []string{"--print-env"},
-			want: result{printEnv: true},
+			want: result{opencodeLen: 1},
 		},
 		{
 			name: "--version sets version",
@@ -277,9 +278,6 @@ func TestParseArgs_Table(t *testing.T) {
 			}
 			if a.ShowHelp != tc.want.showHelp {
 				t.Errorf("showHelp: got %v, want %v", a.ShowHelp, tc.want.showHelp)
-			}
-			if a.PrintEnv != tc.want.printEnv {
-				t.Errorf("printEnv: got %v, want %v", a.PrintEnv, tc.want.printEnv)
 			}
 			if a.Model != tc.want.model {
 				t.Errorf("model: got %q, want %q", a.Model, tc.want.model)
@@ -429,12 +427,25 @@ func TestHandleHelp_ContainsDatabricksOpencode(t *testing.T) {
 	}
 }
 
-func TestHandleHelp_ContainsPrintEnvFlag(t *testing.T) {
+// TestHandleHelp_PrintEnvRemoved verifies that --print-env no longer
+// appears in the help body (#82 replaced it with `config show`).
+func TestHandleHelp_PrintEnvRemoved(t *testing.T) {
 	out := captureStdout(func() {
 		handleHelp("")
 	})
-	if !strings.Contains(out, "--print-env") {
-		t.Errorf("expected help output to contain '--print-env', got:\n%s", out)
+	if strings.Contains(out, "--print-env") {
+		t.Errorf("help output should not mention --print-env (replaced by 'config show'), got:\n%s", out)
+	}
+}
+
+// TestHandleHelp_ContainsConfigSubcommand verifies that the new `config`
+// subcommand surfaces in the help body so users can discover `config show`.
+func TestHandleHelp_ContainsConfigSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	if !strings.Contains(out, "config show") {
+		t.Errorf("expected help output to mention 'config show', got:\n%s", out)
 	}
 }
 
@@ -554,10 +565,31 @@ func TestParseArgs_PortEquals(t *testing.T) {
 	}
 }
 
-func TestParseArgs_Headless(t *testing.T) {
+// TestParseArgs_HeadlessRemoved verifies the legacy --headless root flag is
+// no longer recognised by parseArgs (#84 moved it under the `serve`
+// subcommand). Behaviour: parseArgs forwards unknown flags to opencode, so
+// --headless should appear in OpencodeArgs and Args.Headless stays false.
+func TestParseArgs_HeadlessRemoved(t *testing.T) {
 	a := mustParse(t, []string{"--headless"})
-	if !a.Headless {
-		t.Error("expected Headless=true for --headless")
+	if a.Headless {
+		t.Error("Args.Headless must remain false; the flag is no longer parsed at the root")
+	}
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--headless" {
+		t.Errorf("--headless should now forward to opencode as unknown, got OpencodeArgs=%v", a.OpencodeArgs)
+	}
+}
+
+// TestParseArgs_IdleTimeoutRemoved verifies --idle-timeout is no longer
+// recognised at the root (#84 moved it under `serve`). It now forwards
+// transparently to opencode like any other unknown flag.
+func TestParseArgs_IdleTimeoutRemoved(t *testing.T) {
+	a := mustParse(t, []string{"--idle-timeout", "30m"})
+	if a.IdleTimeout != 0 {
+		t.Errorf("Args.IdleTimeout must remain 0; the flag is no longer parsed at the root, got %v", a.IdleTimeout)
+	}
+	// Both tokens should pass through to opencode unchanged.
+	if len(a.OpencodeArgs) != 2 || a.OpencodeArgs[0] != "--idle-timeout" || a.OpencodeArgs[1] != "30m" {
+		t.Errorf("--idle-timeout 30m should forward to opencode, got OpencodeArgs=%v", a.OpencodeArgs)
 	}
 }
 
@@ -579,10 +611,81 @@ func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 	out := captureStdout(func() {
 		handleHelp("")
 	})
-	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--headless", "--idle-timeout", "--install-hooks", "--uninstall-hooks", "--headless-ensure", "--no-update-check"}
+	// Note: --print-env removed in #82 (replaced by `config show`); the
+	// hooks lifecycle flags --install-hooks, --uninstall-hooks, and
+	// --headless-ensure removed in #83 (replaced by the `hooks` subcommand
+	// — see TestHandleHelp_HookFlagsRemoved). --headless and --idle-timeout
+	// removed in #84 (replaced by the `serve` subcommand — see
+	// TestHandleHelp_HeadlessFlagsRemoved). None of those sets are listed
+	// here.
+	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--no-update-check"}
 	for _, flag := range flags {
 		if !strings.Contains(out, flag) {
 			t.Errorf("expected help output to contain flag %q, got:\n%s", flag, out)
+		}
+	}
+}
+
+// TestHandleHelp_HeadlessFlagsRemoved verifies the legacy --headless and
+// --idle-timeout root flags no longer appear in the help body (#84
+// replaced them with the `serve` subcommand). The serve-subcommand line
+// itself should mention `--idle-timeout` because the help template lists
+// the new home for the flag, so we only assert the bare-flag forms are
+// absent — the `serve --idle-timeout` callout in the body is fine.
+func TestHandleHelp_HeadlessFlagsRemoved(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	// "--headless" must not appear at all (the new entrypoint is `serve`).
+	if strings.Contains(out, "--headless") {
+		t.Errorf("help output should not mention --headless (replaced by `serve`), got:\n%s", out)
+	}
+	// "--idle-timeout" appears only inside the `serve [--idle-timeout]`
+	// line of the subcommands table; assert it is NOT listed in the
+	// flags table by checking it doesn't appear on a leading-whitespace
+	// flag line of its own (e.g. "  --idle-timeout duration").
+	for _, ghost := range []string{"  --idle-timeout duration", "  --idle-timeout string"} {
+		if strings.Contains(out, ghost) {
+			t.Errorf("help output should not list --idle-timeout as a root flag, got:\n%s", out)
+		}
+	}
+}
+
+// TestHandleHelp_ContainsServeSubcommand verifies the new `serve`
+// subcommand surfaces in the help body so users can discover it as the
+// replacement for `--headless`.
+func TestHandleHelp_ContainsServeSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	if !strings.Contains(out, "serve") {
+		t.Errorf("expected help output to mention `serve` subcommand, got:\n%s", out)
+	}
+}
+
+// TestHandleHelp_HookFlagsRemoved verifies that --install-hooks /
+// --uninstall-hooks / --headless-ensure no longer appear in the help body
+// (#83 replaced them with the `hooks` subcommand).
+func TestHandleHelp_HookFlagsRemoved(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	for _, removed := range []string{"--install-hooks", "--uninstall-hooks", "--headless-ensure"} {
+		if strings.Contains(out, removed) {
+			t.Errorf("help output should not mention %q (replaced by `hooks` subcommand), got:\n%s", removed, out)
+		}
+	}
+}
+
+// TestHandleHelp_ContainsHooksSubcommand verifies that the new `hooks`
+// subcommand surfaces in the help body so users can discover it.
+func TestHandleHelp_ContainsHooksSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	for _, want := range []string{"hooks install", "hooks uninstall", "hooks session-start"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected help output to mention %q, got:\n%s", want, out)
 		}
 	}
 }
@@ -629,55 +732,113 @@ func TestKnownFlagsCoverAllFlagDefs(t *testing.T) {
 	}
 }
 
-// --- --idle-timeout strict parsing tests (issue #72) ---
+// --idle-timeout strict-parsing tests (issue #72, PR #76) lived here while the
+// flag was a root flag. #84 lifted --idle-timeout under the `serve`
+// subcommand and dropped the root parser's case for it; the bare-number-is-
+// minutes grammar plus the "valid duration" cases are exercised against the
+// new parseServeIdleTimeout helper in serve_cmd_test.go.
 
-func TestParseArgs_IdleTimeoutInvalidWord(t *testing.T) {
-	_, err := parseArgs([]string{"--idle-timeout=5min"})
-	if err == nil {
-		t.Fatal("expected error for --idle-timeout=5min, got nil")
-	}
-	if !strings.Contains(err.Error(), "--idle-timeout") {
-		t.Errorf("error should mention --idle-timeout, got: %v", err)
-	}
-}
+// --- Tree ↔ parser parity tests (#82) ---
+//
+// The command-tree registry in commands.go is the single source of truth for
+// the root flag set. flagDefs and knownFlags derive from it. parseArgs
+// individually handles each flag in a switch. These two tests pin the
+// bidirectional invariant: every flag declared in the tree is recognised by
+// parseArgs (no silent drops), and every flag parseArgs handles is declared
+// in the tree (no parse-only ghost flags).
+//
+// Bidirectional verification was performed during #82: temporarily deleting a
+// flag from rootCommand causes TestRootTreeFlagsAreParseRecognised to fail
+// loudly, confirming the test catches drift in either direction.
 
-func TestParseArgs_IdleTimeoutBareNumberRejected(t *testing.T) {
-	// Was previously interpreted as 30 minutes — must now error.
-	_, err := parseArgs([]string{"--idle-timeout=30"})
-	if err == nil {
-		t.Fatal("expected error for bare number --idle-timeout=30, got nil")
-	}
-}
-
-func TestParseArgs_IdleTimeoutValidDurations(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want time.Duration
-	}{
-		{"30s", 30 * time.Second},
-		{"5m", 5 * time.Minute},
-		{"1h", 1 * time.Hour},
-		{"0", 0},
-	}
-	for _, c := range cases {
-		t.Run(c.raw, func(t *testing.T) {
-			a, err := parseArgs([]string{"--idle-timeout=" + c.raw})
-			if err != nil {
-				t.Fatalf("expected no error for --idle-timeout=%s, got %v", c.raw, err)
+// TestRootTreeFlagsAreParseRecognised exercises every flag declared in
+// rootCommand (Persistent + Flags) and verifies parseArgs accepts it without
+// erroring. A flag added to the tree but missing a switch case in parseArgs
+// will hit the default arm and return the "internal: …" error this test
+// asserts against.
+func TestRootTreeFlagsAreParseRecognised(t *testing.T) {
+	for _, f := range rootCommand.AllFlags() {
+		t.Run(f.Name, func(t *testing.T) {
+			args := []string{"--" + f.Name}
+			if f.TakesArg {
+				// Provide a placeholder value; for --idle-timeout it must
+				// parse as a duration so the post-switch validator passes.
+				switch f.Name {
+				case "idle-timeout":
+					args = append(args, "30m")
+				case "port":
+					args = append(args, "12345")
+				default:
+					args = append(args, "x")
+				}
 			}
-			if a.IdleTimeout != c.want {
-				t.Errorf("--idle-timeout=%s: got %v, want %v", c.raw, a.IdleTimeout, c.want)
+			if _, err := parseArgs(args); err != nil {
+				t.Errorf("parseArgs(%v) errored: %v — flag declared in rootCommand but unhandled in parseArgs", args, err)
 			}
 		})
 	}
 }
 
-func TestParseArgs_IdleTimeoutSpaceSeparated(t *testing.T) {
-	a, err := parseArgs([]string{"--idle-timeout", "1h"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+// TestParseArgsCasesAreDeclaredInRootTree is the reverse parity: every flag
+// in knownFlags must be declared on rootCommand. Since knownFlags is now
+// derived from rootCommand.KnownFlags(), this test is structurally
+// equivalent to a sanity check on the derivation, but it documents the
+// contract explicitly so a future refactor that hand-rolls knownFlags would
+// fail loudly.
+func TestParseArgsCasesAreDeclaredInRootTree(t *testing.T) {
+	declared := map[string]bool{}
+	for _, f := range rootCommand.AllFlags() {
+		declared["--"+f.Name] = true
 	}
-	if a.IdleTimeout != time.Hour {
-		t.Errorf("expected 1h, got %v", a.IdleTimeout)
+	for k := range knownFlags {
+		if !declared[k] {
+			t.Errorf("knownFlags has %q but rootCommand has no matching FlagDef — declare it in commands.go", k)
+		}
+	}
+}
+
+// TestConfigShowMatchesLegacyPrintEnv verifies that the new config-show
+// dispatch produces the same output shape as the removed --print-env root
+// flag. We exercise handlePrintEnv directly with the same inputs both code
+// paths feed it; runConfigShow itself requires `databricks` on PATH and
+// valid auth, which CI may not have. This test pins the shared output
+// contract so byte-equivalence smoke tests at the binary level (run during
+// PR verification) have a unit-level companion.
+func TestConfigShowMatchesLegacyPrintEnv(t *testing.T) {
+	host := "https://dbc.example.com"
+	gateway := "https://dbc.example.com/ai-gateway/anthropic"
+	token := "dapi-secret"
+	profile := "DEFAULT"
+	model := "databricks-claude-opus-4-7"
+
+	out := captureStdout(func() {
+		handlePrintEnv(host, gateway, token, profile, model)
+	})
+
+	// Required keys present (the legacy --print-env contract).
+	for _, want := range []string{"Profile:", "Model:", "DATABRICKS_HOST:", "ANTHROPIC_BASE_URL:", "Auth Token:", "OpenCode binary:", host, gateway, profile, model} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show output missing %q (legacy --print-env contract):\n%s", want, out)
+		}
+	}
+	// Token must be redacted regardless of input shape.
+	if strings.Contains(out, token) {
+		t.Errorf("token %q leaked into config show output:\n%s", token, out)
+	}
+}
+
+// TestConfigShowSubcommandKnownFlags verifies the `show` subcommand's tree
+// declares the expected flags so its own Parse call (in runConfigShow)
+// recognises --profile / --port / --help.
+func TestConfigShowSubcommandKnownFlags(t *testing.T) {
+	show := configCommand.Subcommand("show")
+	if show == nil {
+		t.Fatal("config command tree missing 'show' subcommand")
+	}
+	known := show.KnownFlags()
+	for _, want := range []string{"--profile", "--port", "--help"} {
+		if !known[want] {
+			t.Errorf("config show missing %q in its known-flag set", want)
+		}
 	}
 }
