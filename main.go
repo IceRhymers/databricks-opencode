@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -134,7 +133,7 @@ func runOpencode(a *Args) {
 	opencodeArgs := a.OpencodeArgs
 
 	if showHelp {
-		handleHelp(upstream)
+		handleHelp()
 		os.Exit(0)
 	}
 
@@ -589,30 +588,14 @@ func runHeadless(proxyURL string, ln net.Listener, isOwner bool, doneCh chan str
 	}
 }
 
-// handleHelp prints the databricks-opencode help section, then execs opencode --help.
-// The first half is rendered from the rootCommand registry (commands.go) so
-// the help body, flag set, and completion scripts share one source of truth.
-func handleHelp(upstreamBinary string) {
-	_ = cmd.Render(os.Stdout, rootCommand, map[string]string{"Version": Version})
-
-	opencodeBin := upstreamBinary
-	if opencodeBin == "" {
-		if p, err := exec.LookPath("opencode"); err == nil {
-			opencodeBin = p
-		}
+// handleHelp renders the databricks-opencode help body from the rootCommand
+// registry (commands.go) so the help body, flag set, and completion scripts
+// share one source of truth. The wrapper does not append `opencode --help` —
+// users who want opencode's own help can run `databricks-opencode -- --help`.
+func handleHelp() {
+	if err := cmd.Render(os.Stdout, rootCommand, map[string]string{"Version": Version}); err != nil {
+		fmt.Fprintf(os.Stderr, "databricks-opencode: failed to render help: %v\n", err)
 	}
-
-	if opencodeBin == "" {
-		fmt.Println("(opencode binary not found on PATH — install from https://opencode.ai)")
-		return
-	}
-
-	var buf bytes.Buffer
-	cmd := exec.Command(opencodeBin, "--help")
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	_ = cmd.Run()
-	fmt.Print(buf.String())
 }
 
 // buildUpdaterConfig returns the standard updater.Config for databricks-opencode.
