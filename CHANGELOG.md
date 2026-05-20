@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.7.0...v1.0.0) (2026-05-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* serve subcommand (consolidate --headless / --idle-timeout) ([#84](https://github.com/IceRhymers/databricks-opencode/issues/84))
+* legacy root flags removed:
+    - --install-hooks    → hooks install
+    - --uninstall-hooks  → hooks uninstall
+    - --headless-ensure  → hooks session-start
+* `--print-env` root flag removed. Use `config show` instead.
+
+### Features
+
+* CLI command-tree restructure (integration branch) ([f5bdb7b](https://github.com/IceRhymers/databricks-opencode/commit/f5bdb7b27124884d5d7ac07a083d4d7f828c2f92))
+* command-tree registry foundation + config show ([#82](https://github.com/IceRhymers/databricks-opencode/issues/82)) ([f0667ab](https://github.com/IceRhymers/databricks-opencode/commit/f0667ab77c1775b4e6814eefed2edf9bdf5102a6))
+* hooks subcommand (install/uninstall/session-start) ([#83](https://github.com/IceRhymers/databricks-opencode/issues/83)) ([0d1b259](https://github.com/IceRhymers/databricks-opencode/commit/0d1b2596c897fc9bb13dd7f29a05ae3989565adb))
+* serve subcommand (consolidate --headless / --idle-timeout) ([#84](https://github.com/IceRhymers/databricks-opencode/issues/84)) ([df1adf9](https://github.com/IceRhymers/databricks-opencode/commit/df1adf9989262c5513030c0799812cdad3662f6e))
+
 ## [0.7.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.6.0...v0.7.0) (2026-05-07)
 
 
