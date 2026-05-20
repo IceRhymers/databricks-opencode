@@ -22,11 +22,10 @@ import (
 // TestParseArgsCasesAreDeclaredInRootTree) fail loudly if step 1 and 2
 // drift apart — the tree is the single source of truth.
 //
-// #82 introduces this tree, migrates the *root* command's flag set, and adds
-// the `config show` subcommand (replacing the removed --print-env root flag).
-// hooks/serve flag migrations land in #83/#84. --profile and --port are
-// declared as Persistent so subcommand inheritance works out of the box once
-// those migrations land.
+// #82 introduced this tree and migrated the *root* command's flag set, plus
+// added the `config show` subcommand. #83 added the `hooks` subcommand. #84
+// adds the `serve` subcommand and removes the legacy --headless and
+// --idle-timeout root flags.
 var rootCommand = cmd.Command{
 	Name:  "databricks-opencode",
 	Short: "Databricks AI Gateway wrapper for OpenCode CLI",
@@ -72,8 +71,6 @@ var rootCommand = cmd.Command{
 		{Name: "proxy-api-key", Description: "Require this API key on all proxy requests", TakesArg: true},
 		{Name: "tls-cert", Description: "TLS certificate file for the local proxy (requires --tls-key)", TakesArg: true, Completer: "__files"},
 		{Name: "tls-key", Description: "TLS private key file for the local proxy (requires --tls-cert)", TakesArg: true, Completer: "__files"},
-		{Name: "headless", Description: "Start proxy without launching opencode (for IDE extensions or hooks)"},
-		{Name: "idle-timeout", Description: "Idle timeout for headless mode (default 30m; 0 disables; bare number = minutes)", TakesArg: true},
 		{Name: "no-update-check", Description: "Skip the automatic update check on startup", EnvVar: "DATABRICKS_NO_UPDATE_CHECK"},
 	},
 
@@ -87,6 +84,7 @@ var rootCommand = cmd.Command{
 		{Name: "update", Short: "Check for a newer release and print upgrade instructions"},
 		configCommand,
 		hooksCommand,
+		serveCommand,
 	},
 }
 
@@ -146,8 +144,6 @@ Databricks-OpenCode Flags:
   --tls-cert string         Path to TLS certificate file (requires --tls-key)
   --tls-key string          Path to TLS private key file (requires --tls-cert)
   --port int                Local proxy port (default: 49156, saved for future sessions)
-  --headless            Start proxy without launching opencode (for IDE extensions)
-  --idle-timeout duration   Idle timeout for headless mode (default 30m, 0 disables; use e.g. 30s, 5m, 1h)
   --no-update-check            Skip the automatic update check on startup
   --version             Print version and exit
   --help, -h            Show this help message
@@ -166,6 +162,10 @@ Subcommands:
                                  hooks session-start             Plugin-invoked internal
                                                                  (replaces removed root flag)
                                Run 'databricks-opencode hooks --help' for details.
+  serve [flags]                Start the proxy without launching opencode
+                               (for IDE extensions or hooks). Bare number on
+                               the idle-timeout flag = minutes; 0 disables.
+                               Run 'databricks-opencode serve --help' for details.
 
 ────────────────────────────────────────────────────────────────────────────────
 OpenCode CLI Options:
@@ -365,4 +365,87 @@ Replaces the legacy --headless-ensure root flag.
 Flags:
   --port int   Proxy listen port (default: saved state > 49156)
   --help, -h   Show this help message
+`
+
+// serveCommand declares the `serve` subcommand introduced in #84. It
+// consolidates the legacy --headless and --idle-timeout root flags into a
+// discoverable subcommand. Mirrors databricks-claude #174 with the same
+// deliberately smaller scope as databricks-codex #89: no daemon mode and no
+// install/uninstall/status — just the session-scoped proxy lifecycle the
+// removed --headless flag drove.
+//
+// Tree shape:
+//
+//	serve   [--profile P] [--port N] [--upstream URL] [--model M]
+//	        [--proxy-api-key K] [--tls-cert C] [--tls-key K]
+//	        [--log-file F] [--verbose|-v] [--no-update-check]
+//	        [--idle-timeout <dur>]
+//
+// Behavior contract: byte-identical to the removed `databricks-opencode
+// --headless` flow. Boots the proxy, patches opencode.json, prints
+// PROXY_URL=… on stdout, and blocks until /shutdown, idle timeout, or
+// SIGINT/SIGTERM.
+//
+// --idle-timeout grammar: same default (30m) and same `0 = disabled` semantics
+// as the removed root flag, PLUS the AC #84 "bare number = minutes" shape
+// (`--idle-timeout 5` ≡ `--idle-timeout 5m`). The bare-number convenience is
+// new — the pre-#84 root flag was strict (PR #76 rejected bare numbers). The
+// shape is restored under `serve` because the issue spells it out as an AC.
+var serveCommand = cmd.Command{
+	Name:  "serve",
+	Short: "Start the proxy without launching opencode (for IDE extensions or hooks)",
+	Long:  serveHelpTemplate,
+	Flags: []cmd.FlagDef{
+		{Name: "profile", Description: "Databricks CLI profile (default: state file > DEFAULT)", TakesArg: true, Completer: "__databricks_profiles", StateKey: "profile", MDMKey: "databricksProfile", Default: "DEFAULT"},
+		{Name: "port", Description: "Proxy listen port (default: state > 49156)", TakesArg: true, StateKey: "port", Default: "49156"},
+		{Name: "upstream", Description: "Override the AI Gateway URL (default: auto-discovered)", TakesArg: true, Completer: "__files"},
+		{Name: "model", Description: "Model to use (default: databricks-claude-opus-4-7)", TakesArg: true},
+		{Name: "proxy-api-key", Description: "Require this API key on all proxy requests", TakesArg: true},
+		{Name: "tls-cert", Description: "TLS certificate file for the local proxy (requires --tls-key)", TakesArg: true, Completer: "__files"},
+		{Name: "tls-key", Description: "TLS private key file for the local proxy (requires --tls-cert)", TakesArg: true, Completer: "__files"},
+		{Name: "log-file", Description: "Write debug logs to file (combinable with --verbose)", TakesArg: true, Completer: "__files"},
+		{Name: "verbose", Short: "v", Description: "Enable debug logging to stderr"},
+		{Name: "no-update-check", Description: "Skip the automatic update check on startup", EnvVar: "DATABRICKS_NO_UPDATE_CHECK"},
+		{Name: "idle-timeout", Description: "Idle timeout (default 30m; 0 disables; bare number = minutes)", TakesArg: true},
+		{Name: "help", Short: "h", Description: "Show help message"},
+	},
+}
+
+const serveHelpTemplate = `Usage: databricks-opencode serve [flags]
+
+Start the local Databricks proxy without launching opencode. Intended for
+IDE extensions, the opencode plugin (see 'hooks session-start'), and any
+host that wants to drive the proxy lifecycle externally.
+
+Replaces the removed --headless and --idle-timeout root flags. Behavior is
+byte-identical to the legacy 'databricks-opencode --headless' flow:
+  - Discovers the workspace host and constructs the AI Gateway URL.
+  - Binds 127.0.0.1:<port> (or joins an existing healthy proxy on that port).
+  - Patches ~/.config/opencode/opencode.json to point at the local proxy.
+  - Prints "PROXY_URL=<scheme>://127.0.0.1:<port>" on stdout.
+  - Blocks until POST /shutdown, the idle timeout fires, or SIGINT/SIGTERM.
+
+Flags:
+  --profile string         Databricks CLI profile (default: state > DEFAULT)
+  --port int               Proxy listen port (default: state > 49156)
+  --upstream string        Override the AI Gateway URL (default: auto-discovered)
+  --model string           Model to use (default: databricks-claude-opus-4-7)
+  --proxy-api-key string   Require this API key on all proxy requests
+  --tls-cert string        TLS certificate file (requires --tls-key)
+  --tls-key string         TLS private key file (requires --tls-cert)
+  --log-file string        Write debug logs to a file
+  --verbose, -v            Enable debug logging to stderr
+  --no-update-check        Skip the automatic update check on startup
+  --idle-timeout duration  Idle timeout (default 30m; 0 disables; bare number = minutes)
+  --help, -h               Show this help message
+
+--idle-timeout examples:
+  --idle-timeout 5m   five minutes
+  --idle-timeout 5    five minutes (bare number = minutes)
+  --idle-timeout 1h   one hour
+  --idle-timeout 0    idle timeout disabled
+
+Migration note (v0.8.0): the legacy root flags --headless and --idle-timeout
+have been removed. Replace 'databricks-opencode --headless' with
+'databricks-opencode serve' (idle-timeout follows as a serve flag).
 `

@@ -71,12 +71,37 @@ make build
 | `--proxy-api-key` | Require this API key on all proxy requests (default: disabled) |
 | `--tls-cert` | Path to TLS certificate file (requires --tls-key) |
 | `--tls-key` | Path to TLS private key file (requires --tls-cert) |
-| `--headless` | Start proxy without launching opencode (for IDE extensions or hooks) |
-| `--idle-timeout` | Idle timeout for headless mode (default 30m; `0` disables; bare number = minutes) |
 | `--version` | Print version and exit |
 | `--help`, `-h` | Show help message |
 
-> **Breaking change (v0.8.0):** `--install-hooks`, `--uninstall-hooks`, and `--headless-ensure` have been removed in favour of the [`hooks` subcommand](#hooks-subcommand) below.
+> **Breaking change (v0.8.0):** `--install-hooks`, `--uninstall-hooks`, and `--headless-ensure` have been removed in favour of the [`hooks` subcommand](#hooks-subcommand) below. `--headless` and `--idle-timeout` have been removed in favour of the [`serve` subcommand](#serve-subcommand) below.
+
+## `serve` Subcommand
+
+Start the local Databricks proxy without launching opencode. Replaces the removed `--headless` / `--idle-timeout` root flags.
+
+| Subcommand | Description |
+|------------|-------------|
+| `serve` | Start the proxy without launching opencode (for IDE extensions or the `hooks` plugin path). Prints `PROXY_URL=…` on stdout and blocks until `POST /shutdown`, the idle timeout fires, or `SIGINT/SIGTERM`. |
+
+```bash
+# Replaces `databricks-opencode --headless`:
+databricks-opencode serve
+
+# Honour --idle-timeout flags (same default 30m; `0` disables; bare number = minutes):
+databricks-opencode serve --idle-timeout 5m
+databricks-opencode serve --idle-timeout 5      # ≡ 5m
+databricks-opencode serve --idle-timeout 0      # disabled
+
+# Override port, profile, TLS, etc — same flag set as the legacy --headless flow:
+databricks-opencode serve --port 49157 --profile aidev --tls-cert cert.pem --tls-key key.pem
+```
+
+`serve` is byte-identical to the legacy `databricks-opencode --headless` flow: discovers the workspace host, constructs the AI Gateway URL, binds `127.0.0.1:<port>` (or joins an existing healthy proxy on that port), patches `~/.config/opencode/opencode.json` to point at the local proxy, prints `PROXY_URL=<scheme>://127.0.0.1:<port>` on stdout, then blocks.
+
+The opencode plugin written by `hooks install` invokes `hooks session-start` at session init, which internally spawns `serve` on the saved port. Users with stale plugins from before v0.8.0 must re-run `hooks install` after upgrading — see the [migration note](#hooks-subcommand) below.
+
+> **Breaking change (v0.8.0):** the `--headless` and `--idle-timeout` root flags have been removed. Use `serve` and `serve --idle-timeout` instead. `serve --idle-timeout 5` (bare number = minutes) is now accepted; the legacy strict-parse error from PR #76 only ever applied to the removed root flag.
 
 ## `config` Subcommand
 
@@ -130,7 +155,7 @@ This writes an OpenCode plugin to `~/.config/opencode/plugins/databricks-proxy/i
 
 ### Shutdown
 
-Unlike Claude Code, OpenCode does not have a session-end hook event. The proxy shuts itself down automatically after **30 minutes of inactivity** (configurable via `--idle-timeout`). You can also stop it manually with `POST /shutdown` or by sending a signal to the process.
+Unlike Claude Code, OpenCode does not have a session-end hook event. The proxy shuts itself down automatically after **30 minutes of inactivity** (configurable via `serve --idle-timeout`). You can also stop it manually with `POST /shutdown` or by sending a signal to the process.
 
 ### Uninstall
 
@@ -145,7 +170,7 @@ Removes only the databricks-opencode plugin file. Other plugins in your opencode
 - Safe to rerun `hooks install` after upgrades — the plugin file is overwritten, not duplicated.
 - Custom port settings persist automatically via the state file (`~/.config/opencode/.databricks-opencode.json`).
 
-> **Migration (v0.8.0):** The legacy root flags `--install-hooks`, `--uninstall-hooks`, and `--headless-ensure` have been removed. **If you have a stale plugin from before v0.8.0**, its session-start invocation still references `--headless-ensure` and will fail at session start. Re-run `databricks-opencode hooks install` once after upgrading to refresh the plugin file. There is no automatic detection — the wrapper does not rewrite plugin files behind your back.
+> **Migration (v0.8.0):** The legacy root flags `--install-hooks`, `--uninstall-hooks`, `--headless-ensure`, `--headless`, and `--idle-timeout` have been removed. **If you have a stale plugin from before v0.8.0**, its session-start invocation references the removed `--headless-ensure` flag and will fail at session start. Re-run `databricks-opencode hooks install` once after upgrading to refresh the plugin file. There is no automatic detection — the wrapper does not rewrite plugin files behind your back.
 
 ## Shell Tab Completions
 
