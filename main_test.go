@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // --- parseArgs tests ---
@@ -566,10 +565,31 @@ func TestParseArgs_PortEquals(t *testing.T) {
 	}
 }
 
-func TestParseArgs_Headless(t *testing.T) {
+// TestParseArgs_HeadlessRemoved verifies the legacy --headless root flag is
+// no longer recognised by parseArgs (#84 moved it under the `serve`
+// subcommand). Behaviour: parseArgs forwards unknown flags to opencode, so
+// --headless should appear in OpencodeArgs and Args.Headless stays false.
+func TestParseArgs_HeadlessRemoved(t *testing.T) {
 	a := mustParse(t, []string{"--headless"})
-	if !a.Headless {
-		t.Error("expected Headless=true for --headless")
+	if a.Headless {
+		t.Error("Args.Headless must remain false; the flag is no longer parsed at the root")
+	}
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--headless" {
+		t.Errorf("--headless should now forward to opencode as unknown, got OpencodeArgs=%v", a.OpencodeArgs)
+	}
+}
+
+// TestParseArgs_IdleTimeoutRemoved verifies --idle-timeout is no longer
+// recognised at the root (#84 moved it under `serve`). It now forwards
+// transparently to opencode like any other unknown flag.
+func TestParseArgs_IdleTimeoutRemoved(t *testing.T) {
+	a := mustParse(t, []string{"--idle-timeout", "30m"})
+	if a.IdleTimeout != 0 {
+		t.Errorf("Args.IdleTimeout must remain 0; the flag is no longer parsed at the root, got %v", a.IdleTimeout)
+	}
+	// Both tokens should pass through to opencode unchanged.
+	if len(a.OpencodeArgs) != 2 || a.OpencodeArgs[0] != "--idle-timeout" || a.OpencodeArgs[1] != "30m" {
+		t.Errorf("--idle-timeout 30m should forward to opencode, got OpencodeArgs=%v", a.OpencodeArgs)
 	}
 }
 
@@ -594,12 +614,52 @@ func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 	// Note: --print-env removed in #82 (replaced by `config show`); the
 	// hooks lifecycle flags --install-hooks, --uninstall-hooks, and
 	// --headless-ensure removed in #83 (replaced by the `hooks` subcommand
-	// — see TestHandleHelp_HookFlagsRemoved). Neither set is listed here.
-	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--headless", "--idle-timeout", "--no-update-check"}
+	// — see TestHandleHelp_HookFlagsRemoved). --headless and --idle-timeout
+	// removed in #84 (replaced by the `serve` subcommand — see
+	// TestHandleHelp_HeadlessFlagsRemoved). None of those sets are listed
+	// here.
+	flags := []string{"--profile", "--upstream", "--verbose", "-v", "--log-file", "--model", "--version", "--help", "--port", "--no-update-check"}
 	for _, flag := range flags {
 		if !strings.Contains(out, flag) {
 			t.Errorf("expected help output to contain flag %q, got:\n%s", flag, out)
 		}
+	}
+}
+
+// TestHandleHelp_HeadlessFlagsRemoved verifies the legacy --headless and
+// --idle-timeout root flags no longer appear in the help body (#84
+// replaced them with the `serve` subcommand). The serve-subcommand line
+// itself should mention `--idle-timeout` because the help template lists
+// the new home for the flag, so we only assert the bare-flag forms are
+// absent — the `serve --idle-timeout` callout in the body is fine.
+func TestHandleHelp_HeadlessFlagsRemoved(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	// "--headless" must not appear at all (the new entrypoint is `serve`).
+	if strings.Contains(out, "--headless") {
+		t.Errorf("help output should not mention --headless (replaced by `serve`), got:\n%s", out)
+	}
+	// "--idle-timeout" appears only inside the `serve [--idle-timeout]`
+	// line of the subcommands table; assert it is NOT listed in the
+	// flags table by checking it doesn't appear on a leading-whitespace
+	// flag line of its own (e.g. "  --idle-timeout duration").
+	for _, ghost := range []string{"  --idle-timeout duration", "  --idle-timeout string"} {
+		if strings.Contains(out, ghost) {
+			t.Errorf("help output should not list --idle-timeout as a root flag, got:\n%s", out)
+		}
+	}
+}
+
+// TestHandleHelp_ContainsServeSubcommand verifies the new `serve`
+// subcommand surfaces in the help body so users can discover it as the
+// replacement for `--headless`.
+func TestHandleHelp_ContainsServeSubcommand(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp("")
+	})
+	if !strings.Contains(out, "serve") {
+		t.Errorf("expected help output to mention `serve` subcommand, got:\n%s", out)
 	}
 }
 
@@ -672,58 +732,11 @@ func TestKnownFlagsCoverAllFlagDefs(t *testing.T) {
 	}
 }
 
-// --- --idle-timeout strict parsing tests (issue #72) ---
-
-func TestParseArgs_IdleTimeoutInvalidWord(t *testing.T) {
-	_, err := parseArgs([]string{"--idle-timeout=5min"})
-	if err == nil {
-		t.Fatal("expected error for --idle-timeout=5min, got nil")
-	}
-	if !strings.Contains(err.Error(), "--idle-timeout") {
-		t.Errorf("error should mention --idle-timeout, got: %v", err)
-	}
-}
-
-func TestParseArgs_IdleTimeoutBareNumberRejected(t *testing.T) {
-	// Was previously interpreted as 30 minutes — must now error.
-	_, err := parseArgs([]string{"--idle-timeout=30"})
-	if err == nil {
-		t.Fatal("expected error for bare number --idle-timeout=30, got nil")
-	}
-}
-
-func TestParseArgs_IdleTimeoutValidDurations(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want time.Duration
-	}{
-		{"30s", 30 * time.Second},
-		{"5m", 5 * time.Minute},
-		{"1h", 1 * time.Hour},
-		{"0", 0},
-	}
-	for _, c := range cases {
-		t.Run(c.raw, func(t *testing.T) {
-			a, err := parseArgs([]string{"--idle-timeout=" + c.raw})
-			if err != nil {
-				t.Fatalf("expected no error for --idle-timeout=%s, got %v", c.raw, err)
-			}
-			if a.IdleTimeout != c.want {
-				t.Errorf("--idle-timeout=%s: got %v, want %v", c.raw, a.IdleTimeout, c.want)
-			}
-		})
-	}
-}
-
-func TestParseArgs_IdleTimeoutSpaceSeparated(t *testing.T) {
-	a, err := parseArgs([]string{"--idle-timeout", "1h"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if a.IdleTimeout != time.Hour {
-		t.Errorf("expected 1h, got %v", a.IdleTimeout)
-	}
-}
+// --idle-timeout strict-parsing tests (issue #72, PR #76) lived here while the
+// flag was a root flag. #84 lifted --idle-timeout under the `serve`
+// subcommand and dropped the root parser's case for it; the bare-number-is-
+// minutes grammar plus the "valid duration" cases are exercised against the
+// new parseServeIdleTimeout helper in serve_cmd_test.go.
 
 // --- Tree ↔ parser parity tests (#82) ---
 //

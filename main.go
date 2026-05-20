@@ -57,6 +57,16 @@ func main() {
 		return
 	}
 
+	// `serve` subcommand — start the proxy without launching opencode.
+	// Replaces the removed --headless / --idle-timeout root flags. Routed
+	// before parseArgs so positional dispatch doesn't fight the
+	// transparent-passthrough behaviour. The dispatcher in serve_cmd.go
+	// parses its own flags then calls runOpencode with Headless=true.
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		runServeCommand(os.Args[2:])
+		return
+	}
+
 	// update — force-check for a newer release and print instructions.
 	if len(os.Args) >= 2 && os.Args[1] == "update" {
 		if os.Getenv("DATABRICKS_NO_UPDATE_CHECK") == "1" {
@@ -90,6 +100,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	runOpencode(a)
+}
+
+// runOpencode is the post-parse body of the wrapper-mode flow. Lifted out of
+// main() in #84 so the `serve` dispatcher can synthesise an *Args (with
+// Headless=true and IdleTimeout populated from `serve --idle-timeout`) and
+// reuse the same proxy-startup + config-patch + opencode-launch logic.
+//
+// Wrapper invocation: main() builds *a from os.Args via parseArgs, leaving
+// Headless=false and IdleTimeout=0 — runOpencode then launches opencode as a
+// child after starting the proxy. Serve invocation: serve_cmd.runServeCommand
+// builds *a from the post-`serve` arg list, sets Headless=true plus the
+// resolved IdleTimeout, and runOpencode skips the opencode child launch and
+// blocks on the lifecycle wrapper instead. The two paths share everything
+// else (port binding, EnsureConfig, refcount, takeover, etc.) so the AC
+// "byte-identical behaviour to --headless" holds by construction.
+func runOpencode(a *Args) {
 	verbose := a.Verbose
 	version := a.Version
 	showHelp := a.ShowHelp
@@ -391,6 +418,13 @@ func main() {
 }
 
 // Args holds all parsed databricks-opencode flags plus the residual opencode args.
+//
+// Headless and IdleTimeout are NOT populated by parseArgs as of #84 — the
+// `--headless` / `--idle-timeout` root flags were removed and replaced by the
+// `serve` subcommand. Both fields remain on the struct because runOpencode
+// reads them: the serve dispatcher (serve_cmd.go) synthesises an Args with
+// Headless=true and IdleTimeout populated from `serve --idle-timeout` before
+// calling runOpencode, so the post-parse logic stays single-sourced.
 type Args struct {
 	Verbose       bool
 	Version       bool
@@ -403,17 +437,23 @@ type Args struct {
 	TLSCert       string
 	TLSKey        string
 	Port          int
-	Headless      bool
-	IdleTimeout   time.Duration
+	Headless      bool          // populated only by the `serve` dispatcher
+	IdleTimeout   time.Duration // populated only by the `serve` dispatcher
 	NoUpdateCheck bool
 	OpencodeArgs  []string
 }
 
 // parseArgs separates databricks-opencode flags from opencode flags.
+//
+// As of #84, --headless and --idle-timeout are NOT recognised at the root —
+// they live under the `serve` subcommand. parseArgs leaves Args.Headless
+// false and Args.IdleTimeout zero; the `serve` dispatcher in serve_cmd.go
+// populates them when invoking runOpencode. Anything that looks like
+// --headless / --idle-timeout at the root falls through to opencode (the
+// transparent-passthrough behaviour the wrapper applies to all unknown
+// flags).
 func parseArgs(args []string) (*Args, error) {
-	a := &Args{
-		IdleTimeout: 30 * time.Minute, // default
-	}
+	a := &Args{}
 
 	// knownFlags is defined at package level in completion_flags.go,
 	// derived from flagDefs so completions and parsing stay in sync.
@@ -511,21 +551,6 @@ func parseArgs(args []string) (*Args, error) {
 					a.Version = true
 				case "--help":
 					a.ShowHelp = true
-				case "--headless":
-					a.Headless = true
-				case "--idle-timeout":
-					raw := value
-					if raw == "" && i+1 < len(args) {
-						i++
-						raw = args[i]
-					}
-					if raw != "" {
-						d, perr := time.ParseDuration(raw)
-						if perr != nil {
-							return nil, fmt.Errorf("--idle-timeout: %q is not a valid duration (use e.g. 30s, 5m, 1h)", raw)
-						}
-						a.IdleTimeout = d
-					}
 				case "--no-update-check":
 					a.NoUpdateCheck = true
 				default:

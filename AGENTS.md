@@ -12,7 +12,11 @@ A lightweight Go proxy wrapper for OpenCode CLI that routes inference requests t
 
 | File | Purpose |
 |------|---------|
-| `main.go` | Entry point: parses flags, resolves profile/model, discovers gateway URL, starts proxy, patches config, runs opencode |
+| `main.go` | Entry point: parses flags, resolves profile/model, discovers gateway URL, starts proxy, patches config, runs opencode. Hosts `runOpencode` (lifted in #84) so the `serve` dispatcher reuses the same body in headless mode. |
+| `commands.go` | Command-tree registry (rootCommand + config/hooks/serve subcommands) — single source of truth for flag set, help text, and shell completion |
+| `serve_cmd.go` | `serve` subcommand dispatcher (#84) — replaces removed `--headless` / `--idle-timeout` root flags; implements bare-number-is-minutes idle-timeout grammar |
+| `hooks_cmd.go` | `hooks` subcommand dispatcher (#83) — install/uninstall opencode plugin + session-start internal |
+| `config_cmd.go` | `config` subcommand dispatcher (#82) — `config show` replaces removed `--print-env` |
 | `config.go` | EnsureConfig: idempotent patch of config.json (no backup, no restore — config persists pointing at the fixed proxy port) |
 | `token.go` | Token management: databricksFetcher implements tokencache.TokenFetcher via Databricks CLI; host discovery |
 | `proxy.go` | ProxyConfig and proxy wrappers; wraps databricks-claude/pkg/proxy |
@@ -95,9 +99,11 @@ make clean
    - On exit, the patched config is left in place — opencode's persistent config keeps pointing at the local proxy URL across runs, and the next run re-patches only if `NeedsConfig` reports drift
 
 8. **Flag Parsing**
-   - Databricks-opencode flags: `--profile`, `--model`, `--upstream`, `--log-file`, `--verbose`, `--version`, `--help`, `--print-env`, `--proxy-api-key`, `--tls-cert`, `--tls-key`
+   - Databricks-opencode root flags: `--profile`, `--model`, `--upstream`, `--log-file`, `--verbose`, `--version`, `--help`, `--proxy-api-key`, `--tls-cert`, `--tls-key`, `--port`, `--no-update-check`
+   - Subcommands: `completion <shell>`, `update`, `config show`, `hooks {install|uninstall|session-start}`, `serve`
    - Separator: `--` passes remaining args to opencode (e.g., `databricks-opencode -- --chat`)
    - Flags not recognized as databricks-opencode flags are passed through to opencode
+   - Removed in #82/#83/#84: `--print-env` (→ `config show`), `--install-hooks` / `--uninstall-hooks` / `--headless-ensure` (→ `hooks` subcommand), `--headless` / `--idle-timeout` (→ `serve` subcommand)
 
 ### Important Notes for Development
 

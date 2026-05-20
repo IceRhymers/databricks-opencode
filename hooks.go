@@ -16,6 +16,16 @@ import (
 //
 // No refcount is acquired here — OpenCode has no exit hook to release it,
 // so the proxy relies on its idle timeout for shutdown instead.
+//
+// EnsureCommand pins the spawn prefix to []string{"serve"} so the detached
+// child reaches the new (#84) `serve` subcommand instead of the removed
+// --headless root flag — without this override, headless.buildArgs would
+// default to the legacy `--headless --port=N` shape, which after #84 falls
+// through to opencode (since --headless is no longer a known wrapper flag)
+// and the proxy never starts. AC: "Plugin-invoked hooks session-start
+// continues to bring the proxy up correctly — headlessEnsure-equivalent
+// path reuses the serve codepath internally, not the removed --headless
+// flag."
 func headlessEnsure(port int) error {
 	s := loadState()
 	scheme := "http"
@@ -29,6 +39,7 @@ func headlessEnsure(port int) error {
 		TLSKey:        s.TLSKey,
 		ManagedEnvVar: "DATABRICKS_OPENCODE_MANAGED",
 		LogPrefix:     "databricks-opencode",
+		EnsureCommand: []string{"serve"},
 	})
 }
 
