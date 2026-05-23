@@ -39,6 +39,20 @@ func TestParseArgs_HelpShort(t *testing.T) {
 	}
 }
 
+// TestParseArgs_SeparatorForwardsHelp verifies that "--" terminates wrapper
+// flag parsing, so "-- --help" must NOT trigger the wrapper's help and must
+// forward "--help" to opencode verbatim. This is the documented passthrough
+// escape hatch users invoke to reach opencode's own help (#90).
+func TestParseArgs_SeparatorForwardsHelp(t *testing.T) {
+	a := mustParse(t, []string{"--", "--help"})
+	if a.ShowHelp {
+		t.Error("expected ShowHelp=false when --help appears after --")
+	}
+	if len(a.OpencodeArgs) != 1 || a.OpencodeArgs[0] != "--help" {
+		t.Errorf("expected OpencodeArgs=[--help], got %v", a.OpencodeArgs)
+	}
+}
+
 // TestParseArgs_PrintEnvRemoved verifies that --print-env is no longer a
 // known flag (replaced by `config show` in #82). Behavior: parseArgs forwards
 // unknown flags to opencode, so --print-env should appear in OpencodeArgs.
@@ -420,7 +434,7 @@ func TestHandlePrintEnv_ContainsModel(t *testing.T) {
 
 func TestHandleHelp_ContainsDatabricksOpencode(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	if !strings.Contains(out, "databricks-opencode") {
 		t.Errorf("expected help output to contain 'databricks-opencode', got:\n%s", out)
@@ -431,7 +445,7 @@ func TestHandleHelp_ContainsDatabricksOpencode(t *testing.T) {
 // appears in the help body (#82 replaced it with `config show`).
 func TestHandleHelp_PrintEnvRemoved(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	if strings.Contains(out, "--print-env") {
 		t.Errorf("help output should not mention --print-env (replaced by 'config show'), got:\n%s", out)
@@ -442,19 +456,40 @@ func TestHandleHelp_PrintEnvRemoved(t *testing.T) {
 // subcommand surfaces in the help body so users can discover `config show`.
 func TestHandleHelp_ContainsConfigSubcommand(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	if !strings.Contains(out, "config show") {
 		t.Errorf("expected help output to mention 'config show', got:\n%s", out)
 	}
 }
 
-func TestHandleHelp_ContainsOpenCodeCLISeparator(t *testing.T) {
+// TestHandleHelp_OmitsAppendedOpencodeHelp verifies that the wrapper no
+// longer execs `opencode --help` and appends its output (#90). The legacy
+// "OpenCode CLI Options:" separator label and the horizontal rule above it
+// must be absent so users see only wrapper help — opencode's own help is
+// reachable via the `--` passthrough escape hatch.
+func TestHandleHelp_OmitsAppendedOpencodeHelp(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
-	if !strings.Contains(out, "OpenCode CLI Options:") {
-		t.Errorf("expected help output to contain 'OpenCode CLI Options:', got:\n%s", out)
+	for _, ghost := range []string{"OpenCode CLI Options:", "────────────────────────"} {
+		if strings.Contains(out, ghost) {
+			t.Errorf("help output should not contain %q (appended opencode help removed in #90), got:\n%s", ghost, out)
+		}
+	}
+}
+
+// TestHandleHelp_DocumentsPassthrough verifies that the help body documents
+// the `--` passthrough escape hatch as the discoverable replacement for the
+// removed appended `opencode --help` block.
+func TestHandleHelp_DocumentsPassthrough(t *testing.T) {
+	out := captureStdout(func() {
+		handleHelp()
+	})
+	for _, want := range []string{"Passthrough to opencode:", "databricks-opencode -- --help"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected help output to contain %q, got:\n%s", want, out)
+		}
 	}
 }
 
@@ -609,7 +644,7 @@ func TestParseArgs_HeadlessDefault(t *testing.T) {
 
 func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	// Note: --print-env removed in #82 (replaced by `config show`); the
 	// hooks lifecycle flags --install-hooks, --uninstall-hooks, and
@@ -634,7 +669,7 @@ func TestHandleHelp_AllFlagsPresent(t *testing.T) {
 // absent — the `serve --idle-timeout` callout in the body is fine.
 func TestHandleHelp_HeadlessFlagsRemoved(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	// "--headless" must not appear at all (the new entrypoint is `serve`).
 	if strings.Contains(out, "--headless") {
@@ -656,7 +691,7 @@ func TestHandleHelp_HeadlessFlagsRemoved(t *testing.T) {
 // replacement for `--headless`.
 func TestHandleHelp_ContainsServeSubcommand(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	if !strings.Contains(out, "serve") {
 		t.Errorf("expected help output to mention `serve` subcommand, got:\n%s", out)
@@ -668,7 +703,7 @@ func TestHandleHelp_ContainsServeSubcommand(t *testing.T) {
 // (#83 replaced them with the `hooks` subcommand).
 func TestHandleHelp_HookFlagsRemoved(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	for _, removed := range []string{"--install-hooks", "--uninstall-hooks", "--headless-ensure"} {
 		if strings.Contains(out, removed) {
@@ -681,7 +716,7 @@ func TestHandleHelp_HookFlagsRemoved(t *testing.T) {
 // subcommand surfaces in the help body so users can discover it.
 func TestHandleHelp_ContainsHooksSubcommand(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	for _, want := range []string{"hooks install", "hooks uninstall", "hooks session-start"} {
 		if !strings.Contains(out, want) {
@@ -692,7 +727,7 @@ func TestHandleHelp_ContainsHooksSubcommand(t *testing.T) {
 
 func TestHandleHelp_ContainsVersion(t *testing.T) {
 	out := captureStdout(func() {
-		handleHelp("")
+		handleHelp()
 	})
 	if !strings.Contains(out, fmt.Sprintf("databricks-opencode v%s", Version)) {
 		t.Errorf("expected help output to contain version string, got:\n%s", out)

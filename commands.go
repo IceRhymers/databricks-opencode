@@ -167,8 +167,11 @@ Subcommands:
                                the idle-timeout flag = minutes; 0 disables.
                                Run 'databricks-opencode serve --help' for details.
 
-────────────────────────────────────────────────────────────────────────────────
-OpenCode CLI Options:
+Passthrough to opencode:
+  Anything after a "--" separator is forwarded to the opencode CLI unchanged.
+  Examples:
+    databricks-opencode -- --help              # show opencode's own help
+    databricks-opencode -- --model o3 -p "hi"  # run opencode with extra flags
 `
 
 const configHelpTemplate = `Usage: databricks-opencode config <subcommand> [flags]
