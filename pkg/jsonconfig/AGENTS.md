@@ -4,7 +4,7 @@
 
 ## Purpose
 
-JSONC-aware OpenCode config manager. Reads and patches `~/.config/opencode/opencode.json`, supporting JSON with comments and trailing commas. Implements surgical patching only — opencode is a patch-and-leave-it persistent config: we own `provider.databricks-proxy` and rewrite it idempotently on every run that `NeedsConfig` reports stale. No backup, no restore.
+JSONC-aware OpenCode config manager. Reads and patches `~/.config/opencode/opencode.json`, supporting JSON with comments and trailing commas. Implements surgical patching only — opencode is a patch-and-leave-it persistent config: we own BOTH `provider.databricks-proxy` (Anthropic via `@ai-sdk/anthropic` on `/v1`) AND `provider.databricks-gemini-proxy` (Gemini Native via `@ai-sdk/google` on `/v1beta`) and rewrite them idempotently on every run that `NeedsConfig` reports stale. No backup, no restore.
 
 ## Key Files
 
@@ -23,6 +23,11 @@ The config manager owns and patches:
 - `provider.databricks-proxy.options.baseURL` — local proxy address + `/v1`
 - `provider.databricks-proxy.options.apiKey` — placeholder key (real auth is injected by the proxy)
 - `provider.databricks-proxy.models[…]` — registered Databricks Claude model entries
+- `provider.databricks-gemini-proxy.npm` — `@ai-sdk/google`
+- `provider.databricks-gemini-proxy.options.baseURL` — local proxy address + `/v1beta`
+- `provider.databricks-gemini-proxy.options.apiKey` — placeholder key (SDK requires non-empty)
+- `provider.databricks-gemini-proxy.options.headers.Authorization` — `Bearer <placeholder>` to override the SDK's default `x-goog-api-key` auth scheme; the proxy rewrites with the live token
+- `provider.databricks-gemini-proxy.models[…]` — registered Databricks Gemini model entries
 
 ### Surgical Patching
 
@@ -52,12 +57,11 @@ Note: only comments and trailing commas are stripped. JSON5 features
 
 ### Idempotency via NeedsConfig
 
-`NeedsConfig(proxyURL)` returns true when:
+`NeedsConfig(proxyURL)` returns true when (any of):
 - the config file is missing
-- the `provider.databricks-proxy` block is absent
-- `options.baseURL` does not match `proxyURL + "/v1"`
-- `options.apiKey` is missing (legacy `authToken` migration)
-- `npm` is not `@ai-sdk/anthropic` (stale package name)
+- the `provider` section is absent
+- the `provider.databricks-proxy` block is absent OR baseURL ≠ `proxyURL + "/v1"` OR `options.apiKey` is missing OR `npm` ≠ `@ai-sdk/anthropic`
+- the `provider.databricks-gemini-proxy` block is absent OR baseURL ≠ `proxyURL + "/v1beta"` OR `options.apiKey` is missing OR `npm` ≠ `@ai-sdk/google`
 
 Callers (the root `EnsureConfig` in `config.go`) skip `Patch` when
 `NeedsConfig` is false, making startup a no-op for already-configured
@@ -93,9 +97,9 @@ Ensures config is never observed in a half-written state.
 
 | Method | Purpose |
 |--------|---------|
-| `Patch(proxyURL, modelName, apiKey, forceModel)` | Inject databricks-proxy provider; set model only if forceModel or absent |
-| `NeedsConfig(proxyURL)` | Report whether a Patch is required (idempotency gate) |
-| `UpdateProxyURL(proxyURL)` | Change baseURL only (no provider re-injection) |
+| `Patch(proxyURL, modelName, apiKey, forceModel)` | Inject BOTH databricks-proxy and databricks-gemini-proxy providers; set model only if forceModel or absent |
+| `NeedsConfig(proxyURL)` | Report whether a Patch is required (drift detection on either provider) |
+| `UpdateProxyURL(proxyURL)` | Change baseURL on BOTH providers (anthropic to `proxyURL+"/v1"`, gemini to `proxyURL+"/v1beta"`); no provider re-injection |
 
 ### Plugin Management
 

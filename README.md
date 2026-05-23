@@ -58,6 +58,13 @@ make build
    databricks-opencode [opencode args]
    ```
 
+Both the Databricks Anthropic (Claude) and Databricks Gemini Native model
+families ship by default. The local proxy serves both upstreams off the
+same port — Anthropic on `/v1`, Gemini on `/v1beta` — so OpenCode's model
+picker shows `databricks-proxy/databricks-claude-*` and
+`databricks-gemini-proxy/databricks-gemini-*` side-by-side. Switch
+between providers from the picker; no extra flag is needed.
+
 ## Flags
 
 | Flag | Description |

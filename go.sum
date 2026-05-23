@@ -1,6 +1,4 @@
-github.com/IceRhymers/databricks-claude v0.17.0 h1:YPJgXMLBMmmr3uhgZWLTPbsikTnYOOpRdiDTWakzoQo=
-github.com/IceRhymers/databricks-claude v0.17.0/go.mod h1:oumYYlTYJnMX94lOok3ammlwLzuPhUhq30DIEFmqwM8=
-github.com/IceRhymers/databricks-claude v1.0.2 h1:kfmmOCDPGCbk8t5mDkLXqIQeLdyDEmW1NGKKW4Kw1cQ=
-github.com/IceRhymers/databricks-claude v1.0.2/go.mod h1:oumYYlTYJnMX94lOok3ammlwLzuPhUhq30DIEFmqwM8=
+github.com/IceRhymers/databricks-claude v1.1.0 h1:0W+t0tyQKL6QsZhaHg6d1d9DvZkP61dLKvq7fWmcOhs=
+github.com/IceRhymers/databricks-claude v1.1.0/go.mod h1:oumYYlTYJnMX94lOok3ammlwLzuPhUhq30DIEFmqwM8=
 github.com/tidwall/jsonc v0.3.2 h1:ZTKrmejRlAJYdn0kcaFqRAKlxxFIC21pYq8vLa4p2Wc=
 github.com/tidwall/jsonc v0.3.2/go.mod h1:dw+3CIxqHi+t8eFSpzzMlcVYxKp08UP5CD8/uSFCyJE=

@@ -128,3 +128,15 @@ func DiscoverHost(cmdName, profile string) (string, error) {
 func ConstructGatewayURL(host string) string {
 	return strings.TrimRight(host, "/") + "/ai-gateway/anthropic"
 }
+
+// ConstructGeminiGatewayURL builds the Databricks AI Gateway URL for the
+// Gemini Native upstream. Format: {host}/ai-gateway/gemini/v1beta
+//
+// The /v1beta segment is included so that the proxy.UpstreamRoute path
+// algebra resolves correctly: incoming /v1beta/models/<m>:generateContent
+// has its /v1beta prefix stripped, then this base path is prepended,
+// yielding /ai-gateway/gemini/v1beta/models/<m>:generateContent —
+// the verified Databricks Gemini endpoint.
+func ConstructGeminiGatewayURL(host string) string {
+	return strings.TrimRight(host, "/") + "/ai-gateway/gemini/v1beta"
+}

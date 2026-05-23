@@ -3,9 +3,14 @@
 // before parsing, allowing users to write JSONC in their config files.
 //
 // Design: surgical patching only. opencode is a patch-and-leave-it
-// persistent config — we own the `provider.databricks-proxy` key and
-// rewrite it idempotently via Patch on every run that NeedsConfig
-// reports stale. No backup, no restore, no crash-recovery sidecar.
+// persistent config — we own BOTH the `provider.databricks-proxy` key
+// (Anthropic via @ai-sdk/anthropic on /v1) AND the
+// `provider.databricks-gemini-proxy` key (Gemini Native via
+// @ai-sdk/google on /v1beta) and rewrite them idempotently via Patch on
+// every run that NeedsConfig reports stale. Both providers route through
+// the same local proxy port — Anthropic on the catch-all, Gemini on the
+// /v1beta path-prefix route. No backup, no restore, no crash-recovery
+// sidecar.
 package jsonconfig
 
 import (
@@ -42,9 +47,11 @@ func (c *Config) Path() string {
 	return c.path
 }
 
-// Patch injects the databricks-proxy provider and optionally sets the model.
-// If forceModel is true, the model is always written (explicit --model flag).
-// If forceModel is false, the model is only set if absent (preserve-if-present).
+// Patch injects both the databricks-proxy (Anthropic) and
+// databricks-gemini-proxy (Gemini Native) providers and optionally sets
+// the model. If forceModel is true, the model is always written
+// (explicit --model flag). If forceModel is false, the model is only set
+// if absent (preserve-if-present).
 func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) error {
 	config, err := c.readConfig()
 	if err != nil {
@@ -79,6 +86,34 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 			"databricks-claude-haiku-4-5":  map[string]interface{}{},
 		},
 	}
+
+	// Inject the databricks-gemini-proxy provider (always overwrite — we own
+	// this key too). Uses @ai-sdk/google; the AI SDK requires a non-empty
+	// apiKey even though the proxy rewrites auth server-side, hence the
+	// placeholder. The Authorization header is set explicitly because the
+	// SDK's default auth scheme is x-goog-api-key, not Bearer.
+	providers["databricks-gemini-proxy"] = map[string]interface{}{
+		"npm":  "@ai-sdk/google",
+		"name": "Databricks Gemini",
+		"options": map[string]interface{}{
+			"baseURL": proxyURL + "/v1beta",
+			"apiKey":  apiKey,
+			"headers": map[string]interface{}{
+				"Authorization": "Bearer " + apiKey,
+			},
+		},
+		// Register all available Databricks Gemini models so users can switch
+		// between them in OpenCode's model picker without manual config edits.
+		"models": map[string]interface{}{
+			"databricks-gemini-3-1-pro":        map[string]interface{}{},
+			"databricks-gemini-3-1-flash-lite": map[string]interface{}{},
+			"databricks-gemini-3-pro":          map[string]interface{}{},
+			"databricks-gemini-3-flash":        map[string]interface{}{},
+			"databricks-gemini-3-5-flash":      map[string]interface{}{},
+			"databricks-gemini-2-5-pro":        map[string]interface{}{},
+			"databricks-gemini-2-5-flash":      map[string]interface{}{},
+		},
+	}
 	config["provider"] = providers
 
 	// Set the active model: preserve-if-present unless forced.
@@ -93,10 +128,12 @@ func (c *Config) Patch(proxyURL, modelName, apiKey string, forceModel bool) erro
 	return c.writeConfig(config)
 }
 
-// NeedsConfig returns true if config.json needs to be written (or rewritten)
-// because the databricks-proxy provider's baseURL does not already match
-// proxyURL + "/v1". Returns true when the config file is missing or the
-// provider section is absent/different.
+// NeedsConfig returns true if config.json needs to be written (or
+// rewritten) because either the databricks-proxy (Anthropic) or
+// databricks-gemini-proxy (Gemini Native) provider is absent or has a
+// stale baseURL / apiKey / npm value. Returns true when the config file
+// is missing, the provider section is absent, or any managed-key drift
+// is detected on either provider.
 func (c *Config) NeedsConfig(proxyURL string) bool {
 	config, err := c.readConfig()
 	if err != nil {
@@ -106,28 +143,47 @@ func (c *Config) NeedsConfig(proxyURL string) bool {
 	if providers == nil {
 		return true
 	}
-	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
-	if dbProxy == nil {
+	if needsProviderRefresh(providers, "databricks-proxy", "@ai-sdk/anthropic", proxyURL+"/v1") {
 		return true
 	}
-	options, _ := dbProxy["options"].(map[string]interface{})
+	if needsProviderRefresh(providers, "databricks-gemini-proxy", "@ai-sdk/google", proxyURL+"/v1beta") {
+		return true
+	}
+	return false
+}
+
+// needsProviderRefresh returns true when the named provider is missing
+// or when any managed key drifts from the expected value: options
+// missing, baseURL stale, apiKey absent (catches stale `authToken` keys
+// from prior schemas), or the npm package wrong.
+func needsProviderRefresh(providers map[string]interface{}, providerKey, wantNPM, wantBaseURL string) bool {
+	provider, _ := providers[providerKey].(map[string]interface{})
+	if provider == nil {
+		return true
+	}
+	options, _ := provider["options"].(map[string]interface{})
 	if options == nil {
 		return true
 	}
 	baseURL, _ := options["baseURL"].(string)
-	if baseURL != proxyURL+"/v1" {
+	if baseURL != wantBaseURL {
 		return true
 	}
-	// Detect stale auth key name (e.g. authToken → apiKey migration).
 	if _, ok := options["apiKey"]; !ok {
 		return true
 	}
-	// Detect stale npm package.
-	npm, _ := dbProxy["npm"].(string)
-	return npm != "@ai-sdk/anthropic"
+	npm, _ := provider["npm"].(string)
+	return npm != wantNPM
 }
 
-// UpdateProxyURL updates only the baseURL in the existing databricks-proxy provider.
+// UpdateProxyURL updates the baseURL for both managed providers — the
+// databricks-proxy (Anthropic) at proxyURL+"/v1" and the
+// databricks-gemini-proxy (Gemini Native) at proxyURL+"/v1beta". The
+// argument is the base proxy URL (no API-version suffix); per-provider
+// suffixes are applied internally so callers do not have to know which
+// upstream lives at which path. Returns an error if the
+// databricks-proxy provider is missing — the gemini provider is best-effort
+// (existing pre-upgrade configs without it are not failed by hand-off).
 func (c *Config) UpdateProxyURL(proxyURL string) error {
 	config, err := c.readConfig()
 	if err != nil {
@@ -144,13 +200,24 @@ func (c *Config) UpdateProxyURL(proxyURL string) error {
 		return fmt.Errorf("no databricks-proxy provider in config")
 	}
 
-	options, _ := dbProxy["options"].(map[string]interface{})
-	if options == nil {
-		options = make(map[string]interface{})
+	dbProxyOpts, _ := dbProxy["options"].(map[string]interface{})
+	if dbProxyOpts == nil {
+		dbProxyOpts = make(map[string]interface{})
 	}
-	options["baseURL"] = proxyURL
-	dbProxy["options"] = options
+	dbProxyOpts["baseURL"] = proxyURL + "/v1"
+	dbProxy["options"] = dbProxyOpts
 	providers["databricks-proxy"] = dbProxy
+
+	if dbGemini, _ := providers["databricks-gemini-proxy"].(map[string]interface{}); dbGemini != nil {
+		geminiOpts, _ := dbGemini["options"].(map[string]interface{})
+		if geminiOpts == nil {
+			geminiOpts = make(map[string]interface{})
+		}
+		geminiOpts["baseURL"] = proxyURL + "/v1beta"
+		dbGemini["options"] = geminiOpts
+		providers["databricks-gemini-proxy"] = dbGemini
+	}
+
 	config["provider"] = providers
 
 	return c.writeConfig(config)
