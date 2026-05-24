@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/IceRhymers/databricks-opencode/compare/v1.0.0...v1.1.0) (2026-05-24)
+
+
+### Features
+
+* add Databricks Gemini Native provider (databricks-gemini-proxy) ([5985b96](https://github.com/IceRhymers/databricks-opencode/commit/5985b96a276f82cc74c7e8062f3606cd17b1917f))
+* add Databricks Gemini Native provider (databricks-gemini-proxy) ([0c12b26](https://github.com/IceRhymers/databricks-opencode/commit/0c12b267223b35c884a6ee2821cd11303f96fc12)), closes [#92](https://github.com/IceRhymers/databricks-opencode/issues/92)
+
 ## [1.0.0](https://github.com/IceRhymers/databricks-opencode/compare/v0.7.0...v1.0.0) (2026-05-23)
 
 
