@@ -6,7 +6,7 @@
 
 A lightweight Go proxy wrapper for OpenCode CLI that routes inference requests through Databricks AI Gateway with automatic OAuth token refresh. The binary patches OpenCode's config.json, starts a local token-refreshing proxy, and launches OpenCode as a child process—so every request to the AI Gateway has a fresh, valid Databricks OAuth token without manual token management.
 
-**Architecture**: OpenCode → local proxy (OAuth injection + token refresh) → Databricks AI Gateway (/anthropic endpoint) → Anthropic
+**Architecture**: OpenCode → local proxy (OAuth injection + token refresh) → Databricks AI Gateway → Anthropic (Claude) on `/v1` (catch-all → `/ai-gateway/anthropic`) and Gemini Native on `/v1beta` (path-prefix route → `/ai-gateway/gemini/v1beta`). Both upstreams share the same local proxy port.
 
 ## Key Files
 
@@ -74,11 +74,12 @@ make clean
 
 3. **Host and Gateway URL Discovery**
    - Host discovered via `databricks auth env --profile <profile> --output json` → `DATABRICKS_HOST`
-   - Gateway URL: `{host}/ai-gateway/anthropic`
+   - Anthropic gateway URL (`InferenceUpstream`): `{host}/ai-gateway/anthropic`
+   - Gemini gateway URL (route at `/v1beta`, full path so the strip-then-prepend resolves correctly): `{host}/ai-gateway/gemini/v1beta`
 
 4. **Config Patching (JSONC-Aware, Patch-and-Leave-It)**
-   - Patches `~/.config/opencode/opencode.json`: injects `provider.databricks-proxy` with the local proxy `baseURL`, placeholder `apiKey`, and the registered Databricks Claude model entries
-   - Idempotent: `NeedsConfig` short-circuits when the existing file already points at the same proxy URL
+   - Patches `~/.config/opencode/opencode.json`: injects BOTH `provider.databricks-proxy` (Anthropic via `@ai-sdk/anthropic` on `/v1`) AND `provider.databricks-gemini-proxy` (Gemini Native via `@ai-sdk/google` on `/v1beta`) with the local proxy `baseURL`, placeholder `apiKey`, and the registered Databricks model entries for each provider
+   - Idempotent: `NeedsConfig` short-circuits when both providers' baseURLs / npm packages are current; missing-or-stale on either side triggers a re-patch
    - Surgical: only the managed keys are touched — user keys (`commands`, `agents`, other providers, `theme`, etc.) are preserved
    - The config persists pointing at the fixed local port; **there is no backup, no restore, and no crash-recovery sidecar**. Subsequent runs simply re-validate via `NeedsConfig` and re-patch only if needed.
    - Supports JSONC (JSON with comments and trailing commas) via `tidwall/jsonc`
@@ -118,6 +119,6 @@ make clean
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `github.com/IceRhymers/databricks-claude` | v0.5.0 | Core packages: `pkg/proxy` (HTTP proxy with token injection), `pkg/tokencache` (token caching), `pkg/authcheck` (auth validation), `pkg/childproc` (child process helpers), `pkg/filelock` (file-based locking), `pkg/registry` (session registry) |
+| `github.com/IceRhymers/databricks-claude` | v1.1.0 | Core packages: `pkg/proxy` (HTTP proxy with token injection + `UpstreamRoute` path-prefix dispatch — used to fan out `/v1` → Anthropic and `/v1beta` → Gemini off the same local port), `pkg/tokencache` (token caching), `pkg/authcheck` (auth validation), `pkg/childproc` (child process helpers), `pkg/filelock` (file-based locking), `pkg/registry` (session registry) |
 | `github.com/tidwall/jsonc` | v0.3.2 | JSONC parsing: strips comments and trailing commas from JSON5-like config |
 | Go stdlib | 1.22+ | `net/http`, `os`, `log`, `context`, `json`, `filepath`, `io` |

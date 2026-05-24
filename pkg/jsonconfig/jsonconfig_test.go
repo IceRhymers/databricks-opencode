@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -188,7 +189,8 @@ func TestUpdateProxyURL(t *testing.T) {
 		t.Fatalf("Patch: %v", err)
 	}
 
-	// Update proxy URL.
+	// Update proxy URL — argument is the base proxy URL; the function
+	// derives /v1 (anthropic) and /v1beta (gemini) suffixes internally.
 	if err := c.UpdateProxyURL("http://127.0.0.1:6000"); err != nil {
 		t.Fatalf("UpdateProxyURL: %v", err)
 	}
@@ -200,8 +202,8 @@ func TestUpdateProxyURL(t *testing.T) {
 	if options == nil {
 		t.Fatal("databricks-proxy options not found after UpdateProxyURL")
 	}
-	if options["baseURL"] != "http://127.0.0.1:6000" {
-		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:6000")
+	if options["baseURL"] != "http://127.0.0.1:6000/v1" {
+		t.Errorf("options.baseURL = %v, want %q", options["baseURL"], "http://127.0.0.1:6000/v1")
 	}
 
 	// Model should be unchanged.
@@ -390,5 +392,258 @@ func TestRemovePlugin_NoFile(t *testing.T) {
 	// Should not error on missing file.
 	if err := c.RemovePlugin("/nonexistent"); err != nil {
 		t.Fatalf("RemovePlugin on missing file should return nil, got: %v", err)
+	}
+}
+
+// TestPatch_InjectsBothProviders verifies Patch writes both the
+// databricks-proxy (Anthropic) AND databricks-gemini-proxy (Gemini)
+// providers in a single pass with the correct npm package, baseURL,
+// apiKey, and — for Gemini — the explicit Authorization header that
+// overrides the @ai-sdk/google default x-goog-api-key auth.
+func TestPatch_InjectsBothProviders(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	if providers == nil {
+		t.Fatal("provider section missing after Patch")
+	}
+
+	// Anthropic provider.
+	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
+	if dbProxy == nil {
+		t.Fatal("databricks-proxy provider missing after Patch")
+	}
+	if dbProxy["npm"] != "@ai-sdk/anthropic" {
+		t.Errorf("databricks-proxy.npm = %v, want %q", dbProxy["npm"], "@ai-sdk/anthropic")
+	}
+	dbOpts, _ := dbProxy["options"].(map[string]interface{})
+	if dbOpts == nil {
+		t.Fatal("databricks-proxy.options missing")
+	}
+	if dbOpts["baseURL"] != "http://127.0.0.1:49156/v1" {
+		t.Errorf("databricks-proxy.options.baseURL = %v, want %q",
+			dbOpts["baseURL"], "http://127.0.0.1:49156/v1")
+	}
+
+	// Gemini provider.
+	gem, _ := providers["databricks-gemini-proxy"].(map[string]interface{})
+	if gem == nil {
+		t.Fatal("databricks-gemini-proxy provider missing after Patch")
+	}
+	if gem["npm"] != "@ai-sdk/google" {
+		t.Errorf("databricks-gemini-proxy.npm = %v, want %q", gem["npm"], "@ai-sdk/google")
+	}
+	gemOpts, _ := gem["options"].(map[string]interface{})
+	if gemOpts == nil {
+		t.Fatal("databricks-gemini-proxy.options missing")
+	}
+	if gemOpts["baseURL"] != "http://127.0.0.1:49156/v1beta" {
+		t.Errorf("databricks-gemini-proxy.options.baseURL = %v, want %q",
+			gemOpts["baseURL"], "http://127.0.0.1:49156/v1beta")
+	}
+	if _, ok := gemOpts["apiKey"].(string); !ok || gemOpts["apiKey"] == "" {
+		t.Errorf("databricks-gemini-proxy.options.apiKey = %v, want non-empty (SDK requires non-empty)", gemOpts["apiKey"])
+	}
+	gemHeaders, _ := gemOpts["headers"].(map[string]interface{})
+	if gemHeaders == nil {
+		t.Fatal("databricks-gemini-proxy.options.headers missing — required to override SDK's default x-goog-api-key auth")
+	}
+	auth, _ := gemHeaders["Authorization"].(string)
+	if !strings.HasPrefix(auth, "Bearer ") {
+		t.Errorf("databricks-gemini-proxy.options.headers.Authorization = %q, want value with %q prefix", auth, "Bearer ")
+	}
+}
+
+// TestPatch_PreservesUserProvider verifies an existing user-defined
+// provider (e.g. openai) is untouched when Patch injects the two
+// databricks-* providers. Companion to the broader
+// TestPatchPreservesUserConfig — this one isolates the
+// other-provider-preserved invariant under the dual-injection contract.
+func TestPatch_PreservesUserProvider(t *testing.T) {
+	c := setupTestConfig(t)
+
+	existing := `{
+  "provider": {
+    "openai": {
+      "apiKey": "sk-user-secret",
+      "models": {"gpt-4o": {}}
+    }
+  }
+}`
+	if err := os.WriteFile(c.Path(), []byte(existing), 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	openai, _ := providers["openai"].(map[string]interface{})
+	if openai == nil {
+		t.Fatal("openai provider was clobbered by Patch")
+	}
+	if openai["apiKey"] != "sk-user-secret" {
+		t.Errorf("openai.apiKey = %v, want %q (user value preserved)", openai["apiKey"], "sk-user-secret")
+	}
+	if _, ok := providers["databricks-proxy"]; !ok {
+		t.Error("databricks-proxy not injected alongside user provider")
+	}
+	if _, ok := providers["databricks-gemini-proxy"]; !ok {
+		t.Error("databricks-gemini-proxy not injected alongside user provider")
+	}
+}
+
+// TestNeedsConfig_DetectsStaleGeminiProvider verifies that a config
+// missing the databricks-gemini-proxy provider — but with a fully
+// correct databricks-proxy block at the expected anthropic baseURL —
+// still returns NeedsConfig=true. This is the upgrade-from-pre-Gemini
+// trigger: existing users get re-patched on first run after upgrade
+// because the Gemini provider is absent.
+func TestNeedsConfig_DetectsStaleGeminiProvider(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Hand-craft an anthropic-only config with the correct anthropic baseURL.
+	// NeedsConfig must still return true because the gemini provider is missing.
+	existing := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"databricks-proxy": map[string]interface{}{
+				"npm":  "@ai-sdk/anthropic",
+				"name": "Databricks AI Gateway",
+				"options": map[string]interface{}{
+					"baseURL": "http://127.0.0.1:49156/v1",
+					"apiKey":  "databricks-proxy",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(c.Path(), data, 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Fatal("NeedsConfig returned false for anthropic-only config; expected true (gemini provider missing)")
+	}
+
+	// Sanity: after Patch, NeedsConfig flips to false.
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	if c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Error("NeedsConfig still true after Patch injected both providers")
+	}
+}
+
+// TestNeedsConfig_DetectsStaleGeminiBaseURL verifies that a config
+// where the databricks-gemini-proxy.options.baseURL points at an
+// outdated proxy port is detected as stale even when the
+// databricks-proxy provider is current. Mirrors the existing
+// TestNeedsConfig_DifferentURL guard but for the Gemini side.
+func TestNeedsConfig_DetectsStaleGeminiBaseURL(t *testing.T) {
+	c := setupTestConfig(t)
+
+	// Patch with one port, then mutate only the gemini baseURL to a stale value.
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	gem, _ := providers["databricks-gemini-proxy"].(map[string]interface{})
+	gemOpts, _ := gem["options"].(map[string]interface{})
+	gemOpts["baseURL"] = "http://127.0.0.1:11111/v1beta" // stale port
+	gem["options"] = gemOpts
+	providers["databricks-gemini-proxy"] = gem
+	m["provider"] = providers
+	data, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(c.Path(), data, 0o600); err != nil {
+		t.Fatalf("write mutated config: %v", err)
+	}
+
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Fatal("NeedsConfig returned false for stale gemini baseURL; expected true")
+	}
+}
+
+// TestUpdateProxyURL_UpdatesBothProviders verifies UpdateProxyURL
+// rewrites the baseURL on BOTH managed providers — anthropic gets the
+// /v1 suffix, gemini gets /v1beta — from a single base proxy URL.
+func TestUpdateProxyURL_UpdatesBothProviders(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	if err := c.UpdateProxyURL("http://127.0.0.1:50000"); err != nil {
+		t.Fatalf("UpdateProxyURL: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+
+	dbProxy, _ := providers["databricks-proxy"].(map[string]interface{})
+	dbOpts, _ := dbProxy["options"].(map[string]interface{})
+	if dbOpts["baseURL"] != "http://127.0.0.1:50000/v1" {
+		t.Errorf("databricks-proxy.options.baseURL = %v, want %q",
+			dbOpts["baseURL"], "http://127.0.0.1:50000/v1")
+	}
+
+	gem, _ := providers["databricks-gemini-proxy"].(map[string]interface{})
+	gemOpts, _ := gem["options"].(map[string]interface{})
+	if gemOpts["baseURL"] != "http://127.0.0.1:50000/v1beta" {
+		t.Errorf("databricks-gemini-proxy.options.baseURL = %v, want %q",
+			gemOpts["baseURL"], "http://127.0.0.1:50000/v1beta")
+	}
+}
+
+// TestPatch_GeminiModelsRegistered verifies all seven Databricks Gemini
+// model entries land in the gemini provider's models map. Keys are
+// listed inline (not looped over a slice the test itself defines) so a
+// typo in the implementation still fails this test.
+func TestPatch_GeminiModelsRegistered(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	gem, _ := providers["databricks-gemini-proxy"].(map[string]interface{})
+	if gem == nil {
+		t.Fatal("databricks-gemini-proxy provider missing")
+	}
+	models, _ := gem["models"].(map[string]interface{})
+	if models == nil {
+		t.Fatal("databricks-gemini-proxy.models missing")
+	}
+
+	if _, ok := models["databricks-gemini-3-1-pro"]; !ok {
+		t.Error("models.databricks-gemini-3-1-pro missing")
+	}
+	if _, ok := models["databricks-gemini-3-1-flash-lite"]; !ok {
+		t.Error("models.databricks-gemini-3-1-flash-lite missing")
+	}
+	if _, ok := models["databricks-gemini-3-pro"]; !ok {
+		t.Error("models.databricks-gemini-3-pro missing")
+	}
+	if _, ok := models["databricks-gemini-3-flash"]; !ok {
+		t.Error("models.databricks-gemini-3-flash missing")
+	}
+	if _, ok := models["databricks-gemini-3-5-flash"]; !ok {
+		t.Error("models.databricks-gemini-3-5-flash missing")
+	}
+	if _, ok := models["databricks-gemini-2-5-pro"]; !ok {
+		t.Error("models.databricks-gemini-2-5-pro missing")
+	}
+	if _, ok := models["databricks-gemini-2-5-flash"]; !ok {
+		t.Error("models.databricks-gemini-2-5-flash missing")
 	}
 }

@@ -273,6 +273,12 @@ func runOpencode(a *Args) {
 	}
 	log.Printf("databricks-opencode: gateway URL: %s", gatewayURL)
 
+	// Gemini Native upstream — always derived from the discovered host
+	// (no --upstream override knob; the /v1beta route is path-prefixed off
+	// the same local proxy port).
+	geminiGatewayURL := ConstructGeminiGatewayURL(host)
+	log.Printf("databricks-opencode: gemini gateway URL: %s", geminiGatewayURL)
+
 	// Verify opencode is on PATH before starting proxy (skip in headless mode).
 	if !headless {
 		if _, err := exec.LookPath("opencode"); err != nil {
@@ -289,6 +295,7 @@ func runOpencode(a *Args) {
 	// --- Build proxy handler (needed by both owner and watchdog) ---
 	proxyHandler, err := NewProxyServer(&ProxyConfig{
 		InferenceUpstream: gatewayURL,
+		GeminiUpstream:    geminiGatewayURL,
 		TokenProvider:     tp,
 		Verbose:           verbose,
 		APIKey:            proxyAPIKey,

@@ -11,17 +11,23 @@ import (
 // ProxyConfig holds the configuration for the proxy server.
 type ProxyConfig struct {
 	InferenceUpstream string
-	TokenProvider     *tokencache.TokenProvider
-	Verbose           bool
-	APIKey            string
-	TLSCertFile       string
-	TLSKeyFile        string
+	// GeminiUpstream, when non-empty, registers a /v1beta path-prefix route
+	// to the Databricks Gemini AI Gateway upstream so the same local proxy
+	// port serves both Anthropic (catch-all) and Gemini Native (/v1beta).
+	// Empty string disables the route — byte-identical to the prior
+	// Anthropic-only behavior.
+	GeminiUpstream string
+	TokenProvider  *tokencache.TokenProvider
+	Verbose        bool
+	APIKey         string
+	TLSCertFile    string
+	TLSKeyFile     string
 }
 
 // NewProxyServer returns an http.Handler that routes requests to the
 // inference upstream. No OTEL upstream is needed for OpenCode.
 func NewProxyServer(config *ProxyConfig) (http.Handler, error) {
-	return proxy.NewServer(&proxy.Config{
+	cfg := &proxy.Config{
 		InferenceUpstream: config.InferenceUpstream,
 		TokenSource:       config.TokenProvider,
 		Verbose:           config.Verbose,
@@ -30,7 +36,14 @@ func NewProxyServer(config *ProxyConfig) (http.Handler, error) {
 		TLSKeyFile:        config.TLSKeyFile,
 		ToolName:          "databricks-opencode",
 		Version:           Version,
-	})
+	}
+	if config.GeminiUpstream != "" {
+		cfg.Routes = append(cfg.Routes, proxy.UpstreamRoute{
+			PathPrefix: "/v1beta",
+			Upstream:   config.GeminiUpstream,
+		})
+	}
+	return proxy.NewServer(cfg)
 }
 
 // StartProxy binds to 127.0.0.1:0, starts serving, and returns the listener.
