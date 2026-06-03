@@ -17,6 +17,13 @@ type ProxyConfig struct {
 	// Empty string disables the route — byte-identical to the prior
 	// Anthropic-only behavior.
 	GeminiUpstream string
+	// OpenAIUpstream, when non-empty, registers a /openai/v1 path-prefix
+	// route to the Databricks OpenAI Responses AI Gateway upstream so the
+	// same local proxy port serves OpenAI Responses traffic — and so the
+	// Responses SSE rewriter (which fires on any path containing
+	// /responses) continues to apply on /openai/v1/responses. Empty string
+	// disables the route.
+	OpenAIUpstream string
 	TokenProvider  *tokencache.TokenProvider
 	Verbose        bool
 	APIKey         string
@@ -36,11 +43,29 @@ func NewProxyServer(config *ProxyConfig) (http.Handler, error) {
 		TLSKeyFile:        config.TLSKeyFile,
 		ToolName:          "databricks-opencode",
 		Version:           Version,
+		// ResponsesRewrite: the Databricks AI Gateway re-encodes Responses-API
+		// SSE and emits a different id in response.output_item.added (item.id)
+		// than in downstream response.output_text.* / response.content_part.*
+		// events (item_id), which trips @ai-sdk/openai's parser with
+		// "text part <id> not found". opencode is OpenAI-shaped and hits
+		// /v1/responses on the Anthropic catch-all route AND
+		// /openai/v1/responses on the new OpenAI path-prefix route — both
+		// satisfy the rewriter's strings.Contains(path, "/responses") gate,
+		// so the gate is default-on here. Sibling wrappers (databricks-claude,
+		// databricks-codex, databricks-cursor) leave it false. See
+		// databricks-claude#191 / databricks-opencode#1.
+		ResponsesRewrite: proxy.ResponsesRewriteSettings{Enabled: true},
 	}
 	if config.GeminiUpstream != "" {
 		cfg.Routes = append(cfg.Routes, proxy.UpstreamRoute{
 			PathPrefix: "/v1beta",
 			Upstream:   config.GeminiUpstream,
+		})
+	}
+	if config.OpenAIUpstream != "" {
+		cfg.Routes = append(cfg.Routes, proxy.UpstreamRoute{
+			PathPrefix: "/openai/v1",
+			Upstream:   config.OpenAIUpstream,
 		})
 	}
 	return proxy.NewServer(cfg)

@@ -647,3 +647,165 @@ func TestPatch_GeminiModelsRegistered(t *testing.T) {
 		t.Error("models.databricks-gemini-2-5-flash missing")
 	}
 }
+
+// TestPatch_InjectsOpenAIProxyProvider verifies Patch writes the
+// databricks-openai-proxy provider with the correct npm package and the
+// literal /openai/v1 baseURL — asserted as a literal string so a
+// copy-paste typo against gemini's /v1beta would fail this test.
+func TestPatch_InjectsOpenAIProxyProvider(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	if providers == nil {
+		t.Fatal("provider section missing after Patch")
+	}
+
+	openai, _ := providers["databricks-openai-proxy"].(map[string]interface{})
+	if openai == nil {
+		t.Fatal("databricks-openai-proxy provider missing after Patch")
+	}
+	if openai["npm"] != "@ai-sdk/openai" {
+		t.Errorf("databricks-openai-proxy.npm = %v, want %q", openai["npm"], "@ai-sdk/openai")
+	}
+	if openai["name"] != "Databricks AI Gateway (OpenAI Responses)" {
+		t.Errorf("databricks-openai-proxy.name = %v, want %q",
+			openai["name"], "Databricks AI Gateway (OpenAI Responses)")
+	}
+	openaiOpts, _ := openai["options"].(map[string]interface{})
+	if openaiOpts == nil {
+		t.Fatal("databricks-openai-proxy.options missing")
+	}
+	// Literal-string assertion catches copy-paste typos against /v1beta.
+	if openaiOpts["baseURL"] != "http://127.0.0.1:49156/openai/v1" {
+		t.Errorf("databricks-openai-proxy.options.baseURL = %v, want %q",
+			openaiOpts["baseURL"], "http://127.0.0.1:49156/openai/v1")
+	}
+	if openaiOpts["apiKey"] != "databricks-proxy" {
+		t.Errorf("databricks-openai-proxy.options.apiKey = %v, want %q",
+			openaiOpts["apiKey"], "databricks-proxy")
+	}
+}
+
+// TestPatch_OpenAIProxyModelsRegistered verifies the OpenAI provider's
+// models map is seeded with databricks-gpt-5-5. Listed inline (not from a
+// looped slice) so a typo in the implementation still fails this test.
+func TestPatch_OpenAIProxyModelsRegistered(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	openai, _ := providers["databricks-openai-proxy"].(map[string]interface{})
+	if openai == nil {
+		t.Fatal("databricks-openai-proxy provider missing")
+	}
+	models, _ := openai["models"].(map[string]interface{})
+	if models == nil {
+		t.Fatal("databricks-openai-proxy.models missing")
+	}
+	if _, ok := models["databricks-gpt-5-5"]; !ok {
+		t.Error("models.databricks-gpt-5-5 missing")
+	}
+}
+
+// TestNeedsConfig_DetectsStaleOpenAIProxyProvider verifies that a config
+// with correct anthropic + gemini providers but missing
+// databricks-openai-proxy returns NeedsConfig=true. Upgrade trigger for
+// existing users.
+func TestNeedsConfig_DetectsStaleOpenAIProxyProvider(t *testing.T) {
+	c := setupTestConfig(t)
+
+	existing := map[string]interface{}{
+		"provider": map[string]interface{}{
+			"databricks-proxy": map[string]interface{}{
+				"npm":  "@ai-sdk/anthropic",
+				"name": "Databricks AI Gateway",
+				"options": map[string]interface{}{
+					"baseURL": "http://127.0.0.1:49156/v1",
+					"apiKey":  "databricks-proxy",
+				},
+			},
+			"databricks-gemini-proxy": map[string]interface{}{
+				"npm":  "@ai-sdk/google",
+				"name": "Databricks Gemini",
+				"options": map[string]interface{}{
+					"baseURL": "http://127.0.0.1:49156/v1beta",
+					"apiKey":  "databricks-proxy",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(c.Path(), data, 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Fatal("NeedsConfig returned false for openai-proxy-missing config; expected true")
+	}
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	if c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Error("NeedsConfig still true after Patch injected openai-proxy")
+	}
+}
+
+// TestNeedsConfig_DetectsStaleOpenAIProxyBaseURL verifies a stale openai
+// baseURL is detected as needing a rewrite even when anthropic + gemini
+// are current. Mirrors the gemini-equivalent guard.
+func TestNeedsConfig_DetectsStaleOpenAIProxyBaseURL(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	openai, _ := providers["databricks-openai-proxy"].(map[string]interface{})
+	openaiOpts, _ := openai["options"].(map[string]interface{})
+	openaiOpts["baseURL"] = "http://127.0.0.1:11111/openai/v1" // stale port
+	openai["options"] = openaiOpts
+	providers["databricks-openai-proxy"] = openai
+	m["provider"] = providers
+	data, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(c.Path(), data, 0o600); err != nil {
+		t.Fatalf("write mutated config: %v", err)
+	}
+
+	if !c.NeedsConfig("http://127.0.0.1:49156") {
+		t.Fatal("NeedsConfig returned false for stale openai-proxy baseURL; expected true")
+	}
+}
+
+// TestUpdateProxyURL_UpdatesOpenAIProxyProvider verifies UpdateProxyURL
+// rewrites the openai-proxy baseURL alongside anthropic and gemini.
+func TestUpdateProxyURL_UpdatesOpenAIProxyProvider(t *testing.T) {
+	c := setupTestConfig(t)
+
+	if err := c.Patch("http://127.0.0.1:49156", "databricks-claude-opus-4-7", "databricks-proxy", false); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	if err := c.UpdateProxyURL("http://127.0.0.1:50000"); err != nil {
+		t.Fatalf("UpdateProxyURL: %v", err)
+	}
+
+	m := readJSON(t, c.Path())
+	providers, _ := m["provider"].(map[string]interface{})
+	openai, _ := providers["databricks-openai-proxy"].(map[string]interface{})
+	openaiOpts, _ := openai["options"].(map[string]interface{})
+	if openaiOpts["baseURL"] != "http://127.0.0.1:50000/openai/v1" {
+		t.Errorf("databricks-openai-proxy.options.baseURL = %v, want %q",
+			openaiOpts["baseURL"], "http://127.0.0.1:50000/openai/v1")
+	}
+}

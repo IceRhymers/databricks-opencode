@@ -279,6 +279,12 @@ func runOpencode(a *Args) {
 	geminiGatewayURL := ConstructGeminiGatewayURL(host)
 	log.Printf("databricks-opencode: gemini gateway URL: %s", geminiGatewayURL)
 
+	// OpenAI Responses upstream — always derived from the discovered host
+	// (no --upstream override knob; the /openai/v1 route is path-prefixed off
+	// the same local proxy port so the Responses SSE rewriter still fires).
+	openaiGatewayURL := ConstructOpenAIGatewayURL(host)
+	log.Printf("databricks-opencode: openai gateway URL: %s", openaiGatewayURL)
+
 	// Verify opencode is on PATH before starting proxy (skip in headless mode).
 	if !headless {
 		if _, err := exec.LookPath("opencode"); err != nil {
@@ -296,6 +302,7 @@ func runOpencode(a *Args) {
 	proxyHandler, err := NewProxyServer(&ProxyConfig{
 		InferenceUpstream: gatewayURL,
 		GeminiUpstream:    geminiGatewayURL,
+		OpenAIUpstream:    openaiGatewayURL,
 		TokenProvider:     tp,
 		Verbose:           verbose,
 		APIKey:            proxyAPIKey,
