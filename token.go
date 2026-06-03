@@ -140,3 +140,17 @@ func ConstructGatewayURL(host string) string {
 func ConstructGeminiGatewayURL(host string) string {
 	return strings.TrimRight(host, "/") + "/ai-gateway/gemini/v1beta"
 }
+
+// ConstructOpenAIGatewayURL builds the Databricks AI Gateway URL for the
+// OpenAI Responses upstream. Format: {host}/ai-gateway/openai/v1
+//
+// The /openai/v1 segment is included so that the proxy.UpstreamRoute path
+// algebra resolves correctly: incoming /openai/v1/responses has its
+// /openai/v1 prefix stripped, then this base path is prepended, yielding
+// /ai-gateway/openai/v1/responses — the verified Databricks OpenAI
+// Responses endpoint. Routing through the local proxy is essential so the
+// Responses SSE rewriter (gated on strings.Contains(path, "/responses"))
+// continues to fire.
+func ConstructOpenAIGatewayURL(host string) string {
+	return strings.TrimRight(host, "/") + "/ai-gateway/openai/v1"
+}

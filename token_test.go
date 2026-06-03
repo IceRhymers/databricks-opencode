@@ -352,3 +352,39 @@ func TestConstructGeminiGatewayURL(t *testing.T) {
 		})
 	}
 }
+
+// TestConstructOpenAIGatewayURL: verifies the host-relative OpenAI
+// Responses AI Gateway URL. Includes /openai/v1 so the UpstreamRoute
+// strip-then-prepend produces the verified /ai-gateway/openai/v1/responses
+// endpoint.
+func TestConstructOpenAIGatewayURL(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{
+			name: "plain host",
+			host: "https://dbc-abc123.cloud.databricks.com",
+			want: "https://dbc-abc123.cloud.databricks.com/ai-gateway/openai/v1",
+		},
+		{
+			name: "trailing slash trimmed",
+			host: "https://dbc-abc123.cloud.databricks.com/",
+			want: "https://dbc-abc123.cloud.databricks.com/ai-gateway/openai/v1",
+		},
+		{
+			name: "multiple trailing slashes trimmed",
+			host: "https://example.databricks.com///",
+			want: "https://example.databricks.com/ai-gateway/openai/v1",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ConstructOpenAIGatewayURL(tc.host)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
