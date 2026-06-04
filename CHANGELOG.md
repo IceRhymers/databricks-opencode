@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0](https://github.com/IceRhymers/databricks-opencode/compare/v1.1.0...v1.2.0) (2026-06-03)
+
+
+### Features
+
+* add Databricks OpenAI Responses provider (databricks-openai-proxy) ([ca0e219](https://github.com/IceRhymers/databricks-opencode/commit/ca0e219db6738d1dd6c5b22cc7a78e44b56868a2))
+* enable Responses API SSE rewriter via databricks-claude v1.2.0 ([9ab80e0](https://github.com/IceRhymers/databricks-opencode/commit/9ab80e0a92830504002a74893c22fff1d632c316))
+* enable Responses API SSE rewriter via databricks-claude v1.2.0 ([ef4fae3](https://github.com/IceRhymers/databricks-opencode/commit/ef4fae3aff86db5525489086b6b254da453b504d)), closes [#95](https://github.com/IceRhymers/databricks-opencode/issues/95)
+
 ## [1.1.0](https://github.com/IceRhymers/databricks-opencode/compare/v1.0.0...v1.1.0) (2026-05-24)
 
 
